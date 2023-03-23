@@ -114,7 +114,8 @@ fn main() {
     // Create the egui context
     let context = egui::Context::default();
     // Create the winit/egui integration.
-    let mut platform = egui_winit::State::new_with_wayland_display(None);
+    //let mut platform = egui_winit::State::new_with_wayland_display(None);
+    let mut platform = egui_winit::State::new(&event_loop);
     platform.set_pixels_per_point(window.scale_factor() as f32);
 
     
@@ -190,44 +191,57 @@ fn main() {
     let mut resolution = glam::UVec2::new(window_size.width, window_size.height);
 
     event_loop.run(move |event, _, control| match event {
-        // Close button was clicked, we should close.
-        winit::event::Event::WindowEvent {
-            event: winit::event::WindowEvent::CloseRequested,
-            ..
-        } => {
-            *control = winit::event_loop::ControlFlow::Exit;
+        winit::event::Event::WindowEvent { event, .. } => {
+            // Pass the window events to the egui integration.
+            if platform.on_event(&context, &event).consumed {
+                return;
+            }
+
+            match event {
+                // Close button was clicked, we should close.
+                winit::event::WindowEvent::CloseRequested => {
+                    *control = winit::event_loop::ControlFlow::Exit;
+                },
+                // Window was resized, need to resize renderer.
+                winit::event::WindowEvent::Resized(physical_size) => {
+                    resolution = glam::UVec2::new(physical_size.width, physical_size.height);
+                    // Reconfigure the surface for the new size.
+                    rend3::configure_surface(
+                        &surface,
+                        &renderer.device,
+                        preferred_format,
+                        glam::UVec2::new(resolution.x, resolution.y),
+                        rend3::types::PresentMode::Fifo,
+                    );
+                    // Tell the renderer about the new aspect ratio.
+                    renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
+                },
+                _ => {}
+            }
         }
-        // Window was resized, need to resize renderer.
-        winit::event::Event::WindowEvent {
-            event: winit::event::WindowEvent::Resized(physical_size),
-            ..
-        } => {
-            resolution = glam::UVec2::new(physical_size.width, physical_size.height);
-            // Reconfigure the surface for the new size.
-            rend3::configure_surface(
-                &surface,
-                &renderer.device,
-                preferred_format,
-                glam::UVec2::new(resolution.x, resolution.y),
-                rend3::types::PresentMode::Fifo,
-            );
-            // Tell the renderer about the new aspect ratio.
-            renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
-        }
-        // Render!
+
         winit::event::Event::MainEventsCleared => {
+            window.request_redraw();
+        },
+
+        // Render!
+        winit::event::Event::RedrawRequested(..) => {
             // UI 
-            let raw_input = egui::RawInput::default();
-            let full_output = context.run(raw_input, |context| {
-                egui::Window::new("Change color").resizable(true).show(&context, |ui| {
-                    ui.label("Change the color of the cube");
-                });
+            context.begin_frame(platform.take_egui_input(&window));
+
+            egui::Window::new("Change color").resizable(true).show(&context, |ui| {
+                ui.label("Change the color of the cube");
             });
-            let clipped_primitives = context.tessellate(full_output.shapes);
+
+            let egui::FullOutput {
+                shapes, textures_delta, ..
+            } = context.end_frame();
+
+            let clipped_meshes = &context.tessellate(shapes);
 
             let input = rend3_egui::Input {
-                clipped_meshes: &clipped_primitives,
-                textures_delta: full_output.textures_delta,
+                clipped_meshes,
+                textures_delta,
                 context: context.clone(),
             };
 
@@ -266,7 +280,10 @@ fn main() {
 
             // Present the frame
             frame.present();
-        }
+
+            control.set_poll(); // default behavior
+        },
+        
         // Other events we don't care about
         _ => {}
     });
