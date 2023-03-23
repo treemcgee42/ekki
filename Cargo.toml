@@ -1,0 +1,25 @@
+[package]
+name = "fe2"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# logging
+env_logger = { version = "0.10", default-features = false, features = ["auto-color", "humantime"] }
+# Linear algebra library
+glam = "0.22"
+# Renderer core
+rend3 = { version = "^0.3.0", path = "external_crates/rend3/rend3" }
+# Programmable render list that dictates how the scene renders
+rend3-routine = { version = "^0.3.0", path = "external_crates/rend3/rend3-routine" }
+rend3-egui = { version = "^0.3.0", path = "external_crates/rend3/rend3-egui" }
+# Provides `block_on` to wait for futures from sync code
+pollster = "0.3"
+# windowing
+winit = "0.28"
+# gui 
+egui = "0.21.0"
+egui-winit = "0.21.1"
+
