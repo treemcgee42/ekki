@@ -9,12 +9,40 @@ static EGUI_LOGGER: EguiLogger = EguiLogger {};
 
 impl log::Log for EguiLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= LOG_BUFFER.lock().unwrap().log_level_filter
+        let log_buffer = LOG_BUFFER.lock().unwrap();
+
+        if metadata.level() > log_buffer.log_level_filter {
+            return false;
+        }
+
+        return true;
     }
 
     fn log(&self, record: &log::Record) {
         let mut log_lock = LOG_BUFFER.lock();
         let buffer = log_lock.as_mut().unwrap();
+
+        if buffer.is_paused { return; }
+
+        let wgpu_enabled = buffer.filter.wgpu.enabled;
+        let starts_with_wgpu = record.metadata().target().starts_with("wgpu");
+        if !wgpu_enabled && starts_with_wgpu {
+            return;
+        } else if wgpu_enabled && starts_with_wgpu {
+            if record.metadata().level() > buffer.filter.wgpu.log_level_filter {
+                return;
+            }
+        }
+
+        let winit_enabled = buffer.filter.winit.enabled;
+        let starts_with_winit = record.metadata().target().starts_with("winit");
+        if !winit_enabled && starts_with_winit {
+            return;
+        } else if winit_enabled && starts_with_winit {
+            if record.metadata().level() > buffer.filter.winit.log_level_filter {
+                return;
+            }
+        }
 
         let line = format!("target: {}, args: {}", record.target(), record.args().to_string());
         buffer.lines.push(line);
@@ -34,6 +62,8 @@ struct LogBuffer {
     lines: Vec<String>,
     max_lines: usize,
     log_level_filter: log::LevelFilter,
+    filter: LogFilter,
+    is_paused: bool,
 }
 static LOG_BUFFER: Mutex<LogBuffer> = Mutex::new(LogBuffer::new(100, log::LevelFilter::Info));
 
@@ -43,6 +73,8 @@ impl LogBuffer {
             lines: Vec::new(),
             max_lines,
             log_level_filter,
+            filter: LogFilter::const_default(),
+            is_paused: false,
         }
     }
 
@@ -56,6 +88,34 @@ impl LogBuffer {
     }
 }
 
+struct LibraryLogFilter {
+    enabled: bool,
+    log_level_filter: log::LevelFilter,
+}
+
+impl LibraryLogFilter {
+    const fn const_default() -> Self {
+        Self {
+            enabled: false,
+            log_level_filter: log::LevelFilter::Error,
+        }
+    }
+}
+
+struct LogFilter {
+    wgpu: LibraryLogFilter,
+    winit: LibraryLogFilter,
+}
+
+impl LogFilter {
+    const fn const_default() -> Self {
+        Self {
+            wgpu: LibraryLogFilter::const_default(),
+            winit: LibraryLogFilter::const_default(),
+        }
+    }
+}
+
 pub fn init(log_level_filter: log::LevelFilter) -> Result<(), log::SetLoggerError> {
     LOG_BUFFER.lock().unwrap().log_level_filter = log_level_filter;
     log::set_logger(&EGUI_LOGGER)?;
@@ -64,33 +124,64 @@ pub fn init(log_level_filter: log::LevelFilter) -> Result<(), log::SetLoggerErro
 
 pub fn draw_egui_console_menu(ui: &mut egui::Ui) {
     egui::menu::bar(ui, |ui| {
+        let mut log_buffer = LOG_BUFFER.lock().unwrap();
+
         ui.menu_button("Edit", |ui| {
-            if ui.button("Clear Logs").clicked() {
-                LOG_BUFFER.lock().unwrap().clear();
+            let mut paused = log_buffer.is_paused.clone();
+            ui.checkbox(&mut paused, "Paused");
+            log_buffer.is_paused = paused;
+
+            if ui.button("Clear").clicked() {
+                log_buffer.clear();
             }
         });
 
-        ui.menu_button("Level", |ui| {
-            let mut log_buffer = LOG_BUFFER.lock().unwrap();
+        ui.menu_button("Filter", |ui| {
+            ui.menu_button("Libraries", |ui| {
+                ui.menu_button("wgpu", |ui| {
+                    let mut enabled = log_buffer.filter.wgpu.enabled.clone();
+                    let mut selected_level_filter_value = log_buffer.filter.wgpu.log_level_filter.clone();
 
-            let mut selected_level_filter_value = log_buffer.log_level_filter.clone();
-            ui.radio_value(&mut selected_level_filter_value, log::LevelFilter::Error, "Error");
-            ui.radio_value(&mut selected_level_filter_value, log::LevelFilter::Warn, "Warn");
-            ui.radio_value(&mut selected_level_filter_value, log::LevelFilter::Info, "Info");
-            ui.radio_value(&mut selected_level_filter_value, log::LevelFilter::Debug, "Debug");
-            ui.radio_value(&mut selected_level_filter_value, log::LevelFilter::Trace, "Trace");
+                    ui.checkbox(&mut enabled, "Enabled");
+                    draw_egui_log_level_options(&mut selected_level_filter_value, ui);
 
-            log_buffer.set_log_level_filter(selected_level_filter_value);
+                    log_buffer.filter.wgpu.enabled = enabled;
+                    log_buffer.filter.wgpu.log_level_filter = selected_level_filter_value;
+                });
+
+                ui.menu_button("winit", |ui| {
+                    let mut enabled = log_buffer.filter.winit.enabled.clone();
+                    let mut selected_level_filter_value = log_buffer.filter.winit.log_level_filter.clone();
+
+                    ui.checkbox(&mut enabled, "Enabled");
+                    draw_egui_log_level_options(&mut selected_level_filter_value, ui);
+
+                    log_buffer.filter.winit.enabled = enabled;
+                    log_buffer.filter.winit.log_level_filter = selected_level_filter_value;
+                });
+            });
+
+            ui.menu_button("Level", |ui| {
+                let mut selected_level_filter_value = log_buffer.log_level_filter.clone();
+                draw_egui_log_level_options(&mut selected_level_filter_value, ui);
+
+                log_buffer.set_log_level_filter(selected_level_filter_value);
+            });
         });
-
     });
+}
+
+fn draw_egui_log_level_options(selected_level_filter_value: &mut log::LevelFilter, ui: &mut egui::Ui) {
+    ui.radio_value(selected_level_filter_value, log::LevelFilter::Error, "Error");
+    ui.radio_value(selected_level_filter_value, log::LevelFilter::Warn, "Warn");
+    ui.radio_value(selected_level_filter_value, log::LevelFilter::Info, "Info");
+    ui.radio_value(selected_level_filter_value, log::LevelFilter::Debug, "Debug");
+    ui.radio_value(selected_level_filter_value, log::LevelFilter::Trace, "Trace");
 }
 
 // Parameters:
 //  - `ui`: provided by the egui region the lines are being rendered into.
 pub fn draw_egui_logging_lines(ui: &mut egui::Ui) {
-    ui.label("Rows enter from the bottom, we want the scroll handle to start and stay at bottom unless moved");
-
     ui.add_space(4.0);
 
     let text_style = egui::TextStyle::Body;
