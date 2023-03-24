@@ -625,6 +625,7 @@ dependencies = [
  "egui-winit",
  "env_logger",
  "glam",
+ "log",
  "pollster",
  "rend3",
  "rend3-egui",

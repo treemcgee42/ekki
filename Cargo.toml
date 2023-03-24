@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 # logging
+log = "0.4"
 env_logger = { version = "0.10", default-features = false, features = ["auto-color", "humantime"] }
 # Linear algebra library
 glam = "0.22"

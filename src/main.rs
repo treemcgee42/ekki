@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+mod ui;
+
 fn vertex(pos: [f32; 3]) -> glam::Vec3 {
     glam::Vec3::from(pos)
 }
@@ -55,7 +57,10 @@ fn create_mesh() -> rend3::types::Mesh {
 
 fn main() {
     // Setup logging
-    env_logger::init();
+    ui::console::init(log::LevelFilter::Warn).unwrap();
+    for _i in 0..200 {
+        log::warn!("hello console!")
+    }
 
     // Create event loop and window
     let event_loop = winit::event_loop::EventLoop::new();
@@ -215,6 +220,8 @@ fn main() {
                     );
                     // Tell the renderer about the new aspect ratio.
                     renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
+
+                    egui_routine.resize(physical_size.width, physical_size.height, window.scale_factor() as f32);
                 },
                 _ => {}
             }
@@ -228,9 +235,14 @@ fn main() {
         winit::event::Event::RedrawRequested(..) => {
             // UI 
             context.begin_frame(platform.take_egui_input(&window));
-
+            
             egui::Window::new("Change color").resizable(true).show(&context, |ui| {
                 ui.label("Change the color of the cube");
+            });
+
+            egui::Window::new("Console").resizable(true).show(&context, |ui| {
+                ui::console::draw_egui_console_menu(ui);
+                ui::console::draw_egui_logging_lines(ui);
             });
 
             let egui::FullOutput {
