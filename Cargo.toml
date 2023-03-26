@@ -16,6 +16,10 @@ rend3 = { version = "^0.3.0", path = "external_crates/rend3/rend3" }
 # Programmable render list that dictates how the scene renders
 rend3-routine = { version = "^0.3.0", path = "external_crates/rend3/rend3-routine" }
 rend3-egui = { version = "^0.3.0", path = "external_crates/rend3/rend3-egui" }
+
+wgpu = "0.15"
+encase = "0.4.1"
+bytemuck = "1.13.1"
 # Provides `block_on` to wait for futures from sync code
 pollster = "0.3"
 # windowing

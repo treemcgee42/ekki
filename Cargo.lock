@@ -621,8 +621,10 @@ dependencies = [
 name = "fe2"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "egui",
  "egui-winit",
+ "encase",
  "env_logger",
  "glam",
  "log",
@@ -630,6 +632,7 @@ dependencies = [
  "rend3",
  "rend3-egui",
  "rend3-routine",
+ "wgpu",
  "winit",
 ]
 

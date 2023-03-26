@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
+use grid::GridRenderRoutine;
+
 mod ui;
+mod grid;
+mod base;
 
 fn vertex(pos: [f32; 3]) -> glam::Vec3 {
     glam::Vec3::from(pos)
@@ -58,9 +62,6 @@ fn create_mesh() -> rend3::types::Mesh {
 fn main() {
     // Setup logging
     ui::console::init(log::LevelFilter::Warn).unwrap();
-    for _i in 0..200 {
-        log::warn!("hello console!")
-    }
 
     // Create event loop and window
     let event_loop = winit::event_loop::EventLoop::new();
@@ -130,7 +131,7 @@ fn main() {
     rend3_routine::builtin_shaders(&mut spp);
 
     // Create the base rendergraph.
-    let base_rendergraph = rend3_routine::base::BaseRenderGraph::new(&renderer, &spp);
+    let base_rendergraph = base::BaseRenderGraph::new(&renderer, &spp);
 
     let mut data_core = renderer.data_core.lock();
     let pbr_routine =
@@ -176,10 +177,18 @@ fn main() {
     let view = view * glam::Mat4::from_translation(-view_location);
 
     // Set camera's location
-    renderer.set_camera_data(rend3::types::Camera {
-        projection: rend3::types::CameraProjection::Perspective { vfov: 60.0, near: 0.1 },
-        view,
-    });
+    let camera = rend3::types::Camera {
+            projection: rend3::types::CameraProjection::Perspective { vfov: 60.0, near: 0.1 },
+            view,
+        };
+    // let camera_manager = rend3::managers::CameraManager::new(
+    //     camera, 
+    //     renderer.handedness, 
+    //     Some(window_size.width as f32 / window_size.height as f32)
+    // );
+    renderer.set_camera_data(camera);
+
+    let mut grid_render_routine = GridRenderRoutine::new(&renderer, preferred_format.clone());
 
     // Create a single directional light
     //
@@ -272,7 +281,7 @@ fn main() {
             let frame_handle =
                 graph.add_imported_render_target(&frame, 0..1, rend3::graph::ViewportRect::from_size(resolution));
             // Add the default rendergraph without a skybox
-            base_rendergraph.add_to_graph(
+            let depth_target_handle = base_rendergraph.add_to_graph(
                 &mut graph,
                 &eval_output,
                 &pbr_routine,
@@ -285,6 +294,7 @@ fn main() {
                 glam::Vec4::new(0.10, 0.05, 0.10, 1.0), // Nice scene-referred purple
             );
 
+            grid_render_routine.add_to_graph(&mut graph, depth_target_handle, frame_handle);
             egui_routine.add_to_graph(&mut graph, input, frame_handle);
 
             // Dispatch a render using the built up rendergraph!
