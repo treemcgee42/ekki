@@ -1,10 +1,14 @@
 use std::sync::Arc;
 
 use grid::GridRenderRoutine;
+use math::vector::Vector2;
 
-mod ui;
-mod grid;
 mod base;
+mod camera;
+mod grid;
+mod input;
+mod math;
+mod ui;
 
 fn vertex(pos: [f32; 3]) -> glam::Vec3 {
     glam::Vec3::from(pos)
@@ -105,7 +109,6 @@ fn main() {
     )
     .unwrap();
 
-
     // Create the egui render routine
     let mut egui_routine = rend3_egui::EguiRenderRoutine::new(
         &renderer,
@@ -116,15 +119,12 @@ fn main() {
         window.scale_factor() as f32,
     );
 
-
     // Create the egui context
     let context = egui::Context::default();
     // Create the winit/egui integration.
     //let mut platform = egui_winit::State::new_with_wayland_display(None);
     let mut platform = egui_winit::State::new(&event_loop);
     platform.set_pixels_per_point(window.scale_factor() as f32);
-
-    
 
     // Create the shader preprocessor with all the default shaders added.
     let mut spp = rend3::ShaderPreProcessor::new();
@@ -134,8 +134,12 @@ fn main() {
     let base_rendergraph = base::BaseRenderGraph::new(&renderer, &spp);
 
     let mut data_core = renderer.data_core.lock();
-    let pbr_routine =
-        rend3_routine::pbr::PbrRoutine::new(&renderer, &mut data_core, &spp, &base_rendergraph.interfaces);
+    let pbr_routine = rend3_routine::pbr::PbrRoutine::new(
+        &renderer,
+        &mut data_core,
+        &spp,
+        &base_rendergraph.interfaces,
+    );
     drop(data_core);
     let tonemapping_routine = rend3_routine::tonemapping::TonemappingRoutine::new(
         &renderer,
@@ -177,13 +181,19 @@ fn main() {
     let view = view * glam::Mat4::from_translation(-view_location);
 
     // Set camera's location
-    let camera = rend3::types::Camera {
-            projection: rend3::types::CameraProjection::Perspective { vfov: 60.0, near: 0.1 },
-            view,
-        };
+    let mut cam = camera::Camera::initialize(window_size.width as f32, window_size.height as f32);
+    let camera = cam.to_rend3_camera();
+
+    // rend3::types::Camera {
+    //     projection: rend3::types::CameraProjection::Perspective {
+    //         vfov: 60.0,
+    //         near: 0.1,
+    //     },
+    //     view,
+    // };
     // let camera_manager = rend3::managers::CameraManager::new(
-    //     camera, 
-    //     renderer.handedness, 
+    //     camera,
+    //     renderer.handedness,
     //     Some(window_size.width as f32 / window_size.height as f32)
     // );
     renderer.set_camera_data(camera);
@@ -204,110 +214,211 @@ fn main() {
 
     let mut resolution = glam::UVec2::new(window_size.width, window_size.height);
 
-    event_loop.run(move |event, _, control| match event {
-        winit::event::Event::WindowEvent { event, .. } => {
-            // Pass the window events to the egui integration.
-            if platform.on_event(&context, &event).consumed {
-                return;
+    let mut input_state = input::InputState::default();
+    event_loop.run(move |event, _, control| {
+        match event {
+            winit::event::Event::WindowEvent { event, .. } => {
+                // Pass the window events to the egui integration.
+                if platform.on_event(&context, &event).consumed {
+                    return;
+                }
+
+                match event {
+                    // Close button was clicked, we should close.
+                    winit::event::WindowEvent::CloseRequested => {
+                        *control = winit::event_loop::ControlFlow::Exit;
+                    }
+                    // Window was resized, need to resize renderer.
+                    winit::event::WindowEvent::Resized(physical_size) => {
+                        resolution = glam::UVec2::new(physical_size.width, physical_size.height);
+                        // Reconfigure the surface for the new size.
+                        rend3::configure_surface(
+                            &surface,
+                            &renderer.device,
+                            preferred_format,
+                            glam::UVec2::new(resolution.x, resolution.y),
+                            rend3::types::PresentMode::Fifo,
+                        );
+                        // Tell the renderer about the new aspect ratio.
+                        renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
+
+                        cam.handle_window_resize(
+                            physical_size.width as f32,
+                            physical_size.height as f32,
+                        );
+                        renderer.set_camera_data(cam.to_rend3_camera());
+
+                        egui_routine.resize(
+                            physical_size.width,
+                            physical_size.height,
+                            window.scale_factor() as f32,
+                        );
+                    }
+
+                    winit::event::WindowEvent::KeyboardInput {
+                        device_id: _,
+                        input,
+                        is_synthetic: _,
+                    } => {
+                        let state = input.state;
+                        let keycode = input.virtual_keycode;
+
+                        if keycode == Some(winit::event::VirtualKeyCode::LShift) {
+                            match state {
+                                winit::event::ElementState::Pressed => {
+                                    input_state.keyboard.shift_pressed = true;
+                                }
+
+                                winit::event::ElementState::Released => {
+                                    input_state.keyboard.shift_pressed = false;
+                                    input_state.keyboard.shift_released = true;
+                                }
+                            }
+                        }
+                    }
+
+                    winit::event::WindowEvent::MouseInput {
+                        device_id: _,
+                        state,
+                        button,
+                        modifiers: _,
+                    } => {
+                        if button == winit::event::MouseButton::Left {
+                            match state {
+                                winit::event::ElementState::Pressed => {
+                                    input_state.mouse.lmb_pressed = true;
+                                    if input_state.mouse.cursor_pos_on_pressed.is_none() {
+                                        input_state.mouse.cursor_pos_on_pressed =
+                                            Some(input_state.mouse.curr_cursor_pos.clone());
+                                    }
+                                }
+                                winit::event::ElementState::Released => {
+                                    input_state.mouse.lmb_pressed = false;
+                                    input_state.mouse.lmb_released = true;
+                                    input_state.mouse.cursor_pos_on_pressed = None;
+                                }
+                            }
+                        }
+                    }
+
+                    _ => {}
+                }
             }
 
-            match event {
-                // Close button was clicked, we should close.
-                winit::event::WindowEvent::CloseRequested => {
-                    *control = winit::event_loop::ControlFlow::Exit;
-                },
-                // Window was resized, need to resize renderer.
-                winit::event::WindowEvent::Resized(physical_size) => {
-                    resolution = glam::UVec2::new(physical_size.width, physical_size.height);
-                    // Reconfigure the surface for the new size.
-                    rend3::configure_surface(
-                        &surface,
-                        &renderer.device,
-                        preferred_format,
-                        glam::UVec2::new(resolution.x, resolution.y),
-                        rend3::types::PresentMode::Fifo,
-                    );
-                    // Tell the renderer about the new aspect ratio.
-                    renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
+            winit::event::Event::DeviceEvent {
+                device_id: _,
+                event,
+            } => match event {
+                winit::event::DeviceEvent::MouseMotion { delta } => {
+                    input_state.mouse.curr_cursor_pos +=
+                        Vector2::new(-delta.0 as f32, -delta.1 as f32);
+                }
 
-                    egui_routine.resize(physical_size.width, physical_size.height, window.scale_factor() as f32);
-                },
                 _ => {}
+            },
+
+            winit::event::Event::MainEventsCleared => {
+                window.request_redraw();
             }
+
+            // Render!
+            winit::event::Event::RedrawRequested(..) => {
+                // UI
+                context.begin_frame(platform.take_egui_input(&window));
+
+                egui::Window::new("Change color")
+                    .resizable(true)
+                    .show(&context, |ui| {
+                        ui.label("Change the color of the cube");
+                    });
+
+                egui::Window::new("Console")
+                    .resizable(true)
+                    .show(&context, |ui| {
+                        ui::console::draw_egui_console_menu(ui);
+                        ui::console::draw_egui_logging_lines(ui);
+                    });
+
+                let egui::FullOutput {
+                    shapes,
+                    textures_delta,
+                    ..
+                } = context.end_frame();
+
+                let clipped_meshes = &context.tessellate(shapes);
+
+                let input = rend3_egui::Input {
+                    clipped_meshes,
+                    textures_delta,
+                    context: context.clone(),
+                };
+
+                // Get a frame
+                let frame = surface.get_current_texture().unwrap();
+
+                // Swap the instruction buffers so that our frame's changes can be processed.
+                renderer.swap_instruction_buffers();
+                // Evaluate our frame's world-change instructions
+                let mut eval_output = renderer.evaluate_instructions();
+
+                // Build a rendergraph
+                let mut graph = rend3::graph::RenderGraph::new();
+
+                // Import the surface texture into the render graph.
+                let frame_handle = graph.add_imported_render_target(
+                    &frame,
+                    0..1,
+                    rend3::graph::ViewportRect::from_size(resolution),
+                );
+                // Add the default rendergraph without a skybox
+                let depth_target_handle = base_rendergraph.add_to_graph(
+                    &mut graph,
+                    &eval_output,
+                    &pbr_routine,
+                    None,
+                    &tonemapping_routine,
+                    frame_handle,
+                    resolution,
+                    rend3::types::SampleCount::One,
+                    glam::Vec4::ZERO,
+                    glam::Vec4::new(0.10, 0.05, 0.10, 1.0), // Nice scene-referred purple
+                );
+
+                grid_render_routine.add_to_graph(&mut graph, depth_target_handle, frame_handle);
+                egui_routine.add_to_graph(&mut graph, input, frame_handle);
+
+                // Dispatch a render using the built up rendergraph!
+                graph.execute(&renderer, &mut eval_output);
+
+                // Present the frame
+                frame.present();
+
+                control.set_poll(); // default behavior
+            }
+
+            // Other events we don't care about
+            _ => {}
         }
 
-        winit::event::Event::MainEventsCleared => {
-            window.request_redraw();
-        },
+        for input_event in input_state.get_input_events() {
+            match input_event {
+                input::InputEvent::DoViewportOrbit => {
+                    cam.turntable_rotate(
+                        &input_state.mouse.curr_cursor_pos
+                            - input_state.mouse.cursor_pos_on_pressed.as_ref().unwrap(),
+                        window_size.into(),
+                    );
+                    renderer.set_camera_data(cam.to_rend3_camera());
+                    log::trace!("(event) do viewport orbit");
+                }
 
-        // Render!
-        winit::event::Event::RedrawRequested(..) => {
-            // UI 
-            context.begin_frame(platform.take_egui_input(&window));
-            
-            egui::Window::new("Change color").resizable(true).show(&context, |ui| {
-                ui.label("Change the color of the cube");
-            });
-
-            egui::Window::new("Console").resizable(true).show(&context, |ui| {
-                ui::console::draw_egui_console_menu(ui);
-                ui::console::draw_egui_logging_lines(ui);
-            });
-
-            let egui::FullOutput {
-                shapes, textures_delta, ..
-            } = context.end_frame();
-
-            let clipped_meshes = &context.tessellate(shapes);
-
-            let input = rend3_egui::Input {
-                clipped_meshes,
-                textures_delta,
-                context: context.clone(),
-            };
-
-            // Get a frame
-            let frame = surface.get_current_texture().unwrap();
-
-            // Swap the instruction buffers so that our frame's changes can be processed.
-            renderer.swap_instruction_buffers();
-            // Evaluate our frame's world-change instructions
-            let mut eval_output = renderer.evaluate_instructions();
-
-            // Build a rendergraph
-            let mut graph = rend3::graph::RenderGraph::new();
-
-            // Import the surface texture into the render graph.
-            let frame_handle =
-                graph.add_imported_render_target(&frame, 0..1, rend3::graph::ViewportRect::from_size(resolution));
-            // Add the default rendergraph without a skybox
-            let depth_target_handle = base_rendergraph.add_to_graph(
-                &mut graph,
-                &eval_output,
-                &pbr_routine,
-                None,
-                &tonemapping_routine,
-                frame_handle,
-                resolution,
-                rend3::types::SampleCount::One,
-                glam::Vec4::ZERO,
-                glam::Vec4::new(0.10, 0.05, 0.10, 1.0), // Nice scene-referred purple
-            );
-
-            grid_render_routine.add_to_graph(&mut graph, depth_target_handle, frame_handle);
-            egui_routine.add_to_graph(&mut graph, input, frame_handle);
-
-            // Dispatch a render using the built up rendergraph!
-            graph.execute(&renderer, &mut eval_output);
-
-            // Present the frame
-            frame.present();
-
-            control.set_poll(); // default behavior
-        },
-        
-        // Other events we don't care about
-        _ => {}
+                input::InputEvent::FinishViewportOrbit => {
+                    cam.solidify_view_info();
+                    renderer.set_camera_data(cam.to_rend3_camera());
+                    log::trace!("(event) finish viewport orbit");
+                }
+            }
+        }
+        input_state.reset_release_events();
     });
 }
-
