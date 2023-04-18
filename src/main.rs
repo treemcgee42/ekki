@@ -5,6 +5,7 @@ use math::vector::Vector2;
 
 mod base;
 mod camera;
+mod custom_renderer;
 mod grid;
 mod input;
 mod math;
