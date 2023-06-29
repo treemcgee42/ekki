@@ -66,24 +66,20 @@ fn create_mesh() -> rend3::types::Mesh {
 
 struct WindowInfo {
     raw_window: winit::window::Window,
+    window_size: winit::dpi::PhysicalSize<u32>,
     surface: Arc<wgpu::Surface>,
+    preferred_texture_format: wgpu::TextureFormat, 
     egui_routine: rend3_egui::EguiRenderRoutine,
     egui_context: egui::Context,
     egui_winit_state: egui_winit::State,
+    rend3_renderer: Arc<rend3::Renderer>,
 }
 
-fn main() {
-    // Setup logging
-    ui::console::init(log::LevelFilter::Warn).unwrap();
-
-    // Create event loop and window
-    let mut windows = HashMap::new();
-
-    let event_loop = winit::event_loop::EventLoop::new();
+fn create_3d_scene_window(event_loop: &winit::event_loop::EventLoop<()>) -> (winit::window::WindowId, WindowInfo) {
     let window = {
         let mut builder = winit::window::WindowBuilder::new();
         builder = builder.with_title("rend3 cube");
-        builder.build(&event_loop).expect("Could not build window")
+        builder.build(event_loop).expect("Could not build window")
     };
 
     let window_size = window.inner_size();
@@ -121,7 +117,7 @@ fn main() {
     .unwrap();
 
     // Create the egui render routine
-    let mut egui_routine = rend3_egui::EguiRenderRoutine::new(
+    let egui_routine = rend3_egui::EguiRenderRoutine::new(
         &renderer,
         preferred_format,
         rend3::types::SampleCount::One,
@@ -138,37 +134,58 @@ fn main() {
     let mut platform = egui_winit::State::new(&event_loop);
     platform.set_pixels_per_point(window.scale_factor() as f32);
 
-    windows.insert(
-        window.id(),
-        WindowInfo {
-            raw_window: window,
-            surface,
-            egui_routine,
-            egui_context: context,
-            egui_winit_state: platform,
-        }
-    );
+    let window_id = window.id();
+    let window_info = WindowInfo {
+        raw_window: window,
+        window_size,
+        surface,
+        preferred_texture_format: preferred_format,
+        egui_routine,
+        egui_context: context,
+        egui_winit_state: platform,
+        rend3_renderer: renderer,
+    };
+
+    (window_id, window_info)
+}
+
+fn main() {
+    // Setup logging
+    ui::console::init(log::LevelFilter::Warn).unwrap();
+
+    // Create event loop and window
+    let event_loop = winit::event_loop::EventLoop::new();
+
+    let mut windows = HashMap::new();
+    let main_window = {
+        let window = create_3d_scene_window(&event_loop);
+        let window_id = window.0;
+        windows.insert(window.0, window.1);
+
+        windows.get_mut(&window_id).unwrap()
+    };
+    let main_window_id = main_window.raw_window.id();
 
     // Create the shader preprocessor with all the default shaders added.
     let mut spp = rend3::ShaderPreProcessor::new();
     rend3_routine::builtin_shaders(&mut spp);
 
     // Create the base rendergraph.
-    let base_rendergraph = base::BaseRenderGraph::new(&renderer, &spp);
+    let base_rendergraph = base::BaseRenderGraph::new(&main_window.rend3_renderer, &spp);
 
-    let mut data_core = renderer.data_core.lock();
+    let mut data_core = main_window.rend3_renderer.data_core.lock();
     let pbr_routine = rend3_routine::pbr::PbrRoutine::new(
-        &renderer,
+        &main_window.rend3_renderer,
         &mut data_core,
         &spp,
         &base_rendergraph.interfaces,
     );
     drop(data_core);
     let tonemapping_routine = rend3_routine::tonemapping::TonemappingRoutine::new(
-        &renderer,
+        &main_window.rend3_renderer,
         &spp,
         &base_rendergraph.interfaces,
-        preferred_format,
+        main_window.preferred_texture_format,
     );
 
     // Create mesh and calculate smooth normals based on vertices
@@ -178,14 +195,14 @@ fn main() {
     //
     // All handles are refcounted, so we only need to hang onto the handle until we
     // make an object.
-    let mesh_handle = renderer.add_mesh(mesh);
+    let mesh_handle = main_window.rend3_renderer.add_mesh(mesh);
 
     // Add PBR material with all defaults except a single color.
     let material = rend3_routine::pbr::PbrMaterial {
         albedo: rend3_routine::pbr::AlbedoComponent::Value(glam::Vec4::new(0.0, 0.5, 0.5, 1.0)),
         ..rend3_routine::pbr::PbrMaterial::default()
     };
-    let material_handle = renderer.add_material(material);
+    let material_handle = main_window.rend3_renderer.add_material(material);
 
     // Combine the mesh and the material with a location to give an object.
     let object = rend3::types::Object {
@@ -197,14 +214,14 @@ fn main() {
     // even if they are deleted.
     //
     // We need to keep the object handle alive.
-    let _object_handle = renderer.add_object(object);
+    let _object_handle = main_window.rend3_renderer.add_object(object);
 
     let view_location = glam::Vec3::new(3.0, 3.0, -5.0);
     let view = glam::Mat4::from_euler(glam::EulerRot::XYZ, -0.55, 0.5, 0.0);
     let view = view * glam::Mat4::from_translation(-view_location);
 
     // Set camera's location
-    let mut cam = camera::Camera::initialize(window_size.width as f32, window_size.height as f32);
+    let mut cam = camera::Camera::initialize(main_window.window_size.width as f32, main_window.window_size.height as f32);
     let camera = cam.to_rend3_camera();
 
     // rend3::types::Camera {
@@ -219,14 +236,14 @@ fn main() {
     //     renderer.handedness,
     //     Some(window_size.width as f32 / window_size.height as f32)
     // );
-    renderer.set_camera_data(camera);
+    main_window.rend3_renderer.set_camera_data(camera);
 
-    let mut grid_render_routine = GridRenderRoutine::new(&renderer, preferred_format.clone());
+    let mut grid_render_routine = GridRenderRoutine::new(&main_window.rend3_renderer, main_window.preferred_texture_format.clone());
 
     // Create a single directional light
     //
     // We need to keep the directional light handle alive.
-    let _directional_handle = renderer.add_directional_light(rend3::types::DirectionalLight {
+    let _directional_handle = main_window.rend3_renderer.add_directional_light(rend3::types::DirectionalLight {
         color: glam::Vec3::ONE,
         intensity: 10.0,
         // Direction will be normalized
@@ -235,7 +252,7 @@ fn main() {
         resolution: 2048,
     });
 
-    let mut resolution = glam::UVec2::new(window_size.width, window_size.height);
+    let mut resolution = glam::UVec2::new(main_window.window_size.width, main_window.window_size.height);
 
     let mut input_state = input::InputState::default();
     event_loop.run(move |event, _, control| {
@@ -259,19 +276,19 @@ fn main() {
                         // Reconfigure the surface for the new size.
                         rend3::configure_surface(
                             &this_window.surface,
-                            &renderer.device,
-                            preferred_format,
+                            &this_window.rend3_renderer.device,
+                            this_window.preferred_texture_format,
                             glam::UVec2::new(resolution.x, resolution.y),
                             rend3::types::PresentMode::Fifo,
                         );
                         // Tell the renderer about the new aspect ratio.
-                        renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
+                        this_window.rend3_renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
 
                         cam.handle_window_resize(
                             physical_size.width as f32,
                             physical_size.height as f32,
                         );
-                        renderer.set_camera_data(cam.to_rend3_camera());
+                        this_window.rend3_renderer.set_camera_data(cam.to_rend3_camera());
 
                         this_window.egui_routine.resize(
                             physical_size.width,
@@ -386,9 +403,9 @@ fn main() {
                 let frame = w.surface.get_current_texture().unwrap();
 
                 // Swap the instruction buffers so that our frame's changes can be processed.
-                renderer.swap_instruction_buffers();
+                w.rend3_renderer.swap_instruction_buffers();
                 // Evaluate our frame's world-change instructions
-                let mut eval_output = renderer.evaluate_instructions();
+                let mut eval_output = w.rend3_renderer.evaluate_instructions();
 
                 // Build a rendergraph
                 let mut graph = rend3::graph::RenderGraph::new();
@@ -417,7 +434,7 @@ fn main() {
                 w.egui_routine.add_to_graph(&mut graph, input, frame_handle);
 
                 // Dispatch a render using the built up rendergraph!
-                graph.execute(&renderer, &mut eval_output);
+                graph.execute(&w.rend3_renderer, &mut eval_output);
 
                 // Present the frame
                 frame.present();
@@ -429,21 +446,22 @@ fn main() {
             _ => {}
         }
 
+        let w = windows.get_mut(&main_window_id).unwrap();
         for input_event in input_state.get_input_events() {
             match input_event {
                 input::InputEvent::DoViewportOrbit => {
                     cam.turntable_rotate(
                         &input_state.mouse.curr_cursor_pos
                             - input_state.mouse.cursor_pos_on_pressed.as_ref().unwrap(),
-                        window_size.into(),
+                        w.window_size.into(),
                     );
-                    renderer.set_camera_data(cam.to_rend3_camera());
+                    w.rend3_renderer.set_camera_data(cam.to_rend3_camera());
                     log::trace!("(event) do viewport orbit");
                 }
 
                 input::InputEvent::FinishViewportOrbit => {
                     cam.solidify_view_info();
-                    renderer.set_camera_data(cam.to_rend3_camera());
+                    w.rend3_renderer.set_camera_data(cam.to_rend3_camera());
                     log::trace!("(event) finish viewport orbit");
                 }
             }
