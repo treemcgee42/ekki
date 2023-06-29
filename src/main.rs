@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, collections::HashMap};
 
 use grid::GridRenderRoutine;
 use math::vector::Vector2;
@@ -64,11 +64,21 @@ fn create_mesh() -> rend3::types::Mesh {
         .unwrap()
 }
 
+struct WindowInfo {
+    raw_window: winit::window::Window,
+    surface: Arc<wgpu::Surface>,
+    egui_routine: rend3_egui::EguiRenderRoutine,
+    egui_context: egui::Context,
+    egui_winit_state: egui_winit::State,
+}
+
 fn main() {
     // Setup logging
     ui::console::init(log::LevelFilter::Warn).unwrap();
 
     // Create event loop and window
+    let mut windows = HashMap::new();
+
     let event_loop = winit::event_loop::EventLoop::new();
     let window = {
         let mut builder = winit::window::WindowBuilder::new();
@@ -122,10 +132,22 @@ fn main() {
 
     // Create the egui context
     let context = egui::Context::default();
+
     // Create the winit/egui integration.
     //let mut platform = egui_winit::State::new_with_wayland_display(None);
     let mut platform = egui_winit::State::new(&event_loop);
     platform.set_pixels_per_point(window.scale_factor() as f32);
+
+    windows.insert(
+        window.id(),
+        WindowInfo {
+            raw_window: window,
+            surface,
+            egui_routine,
+            egui_context: context,
+            egui_winit_state: platform,
+        }
+    );
 
     // Create the shader preprocessor with all the default shaders added.
     let mut spp = rend3::ShaderPreProcessor::new();
@@ -218,9 +240,11 @@ fn main() {
     let mut input_state = input::InputState::default();
     event_loop.run(move |event, _, control| {
         match event {
-            winit::event::Event::WindowEvent { event, .. } => {
+            winit::event::Event::WindowEvent { window_id, event } => {
+                let this_window = windows.get_mut(&window_id).unwrap();
+
                 // Pass the window events to the egui integration.
-                if platform.on_event(&context, &event).consumed {
+                if this_window.egui_winit_state.on_event(&this_window.egui_context, &event).consumed {
                     return;
                 }
 
@@ -234,7 +258,7 @@ fn main() {
                         resolution = glam::UVec2::new(physical_size.width, physical_size.height);
                         // Reconfigure the surface for the new size.
                         rend3::configure_surface(
-                            &surface,
+                            &this_window.surface,
                             &renderer.device,
                             preferred_format,
                             glam::UVec2::new(resolution.x, resolution.y),
@@ -249,10 +273,10 @@ fn main() {
                         );
                         renderer.set_camera_data(cam.to_rend3_camera());
 
-                        egui_routine.resize(
+                        this_window.egui_routine.resize(
                             physical_size.width,
                             physical_size.height,
-                            window.scale_factor() as f32,
+                            this_window.raw_window.scale_factor() as f32,
                         );
                     }
 
@@ -319,23 +343,27 @@ fn main() {
             },
 
             winit::event::Event::MainEventsCleared => {
-                window.request_redraw();
+                for w in windows.values_mut() {
+                    w.raw_window.request_redraw();
+                }
             }
 
             // Render!
-            winit::event::Event::RedrawRequested(..) => {
+            winit::event::Event::RedrawRequested(window_id) => {
+                let w = windows.get_mut(&window_id).unwrap();
+
                 // UI
-                context.begin_frame(platform.take_egui_input(&window));
+                w.egui_context.begin_frame(w.egui_winit_state.take_egui_input(&w.raw_window));
 
                 egui::Window::new("Change color")
                     .resizable(true)
-                    .show(&context, |ui| {
+                    .show(&w.egui_context, |ui| {
                         ui.label("Change the color of the cube");
                     });
 
                 egui::Window::new("Console")
                     .resizable(true)
-                    .show(&context, |ui| {
+                    .show(&w.egui_context, |ui| {
                         ui::console::draw_egui_console_menu(ui);
                         ui::console::draw_egui_logging_lines(ui);
                     });
@@ -344,18 +372,18 @@ fn main() {
                     shapes,
                     textures_delta,
                     ..
-                } = context.end_frame();
+                } = w.egui_context.end_frame();
 
-                let clipped_meshes = &context.tessellate(shapes);
+                let clipped_meshes = &w.egui_context.tessellate(shapes);
 
                 let input = rend3_egui::Input {
                     clipped_meshes,
                     textures_delta,
-                    context: context.clone(),
+                    context: w.egui_context.clone(),
                 };
 
                 // Get a frame
-                let frame = surface.get_current_texture().unwrap();
+                let frame = w.surface.get_current_texture().unwrap();
 
                 // Swap the instruction buffers so that our frame's changes can be processed.
                 renderer.swap_instruction_buffers();
@@ -386,7 +414,7 @@ fn main() {
                 );
 
                 grid_render_routine.add_to_graph(&mut graph, depth_target_handle, frame_handle);
-                egui_routine.add_to_graph(&mut graph, input, frame_handle);
+                w.egui_routine.add_to_graph(&mut graph, input, frame_handle);
 
                 // Dispatch a render using the built up rendergraph!
                 graph.execute(&renderer, &mut eval_output);
