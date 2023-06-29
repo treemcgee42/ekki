@@ -1,4 +1,4 @@
-use std::{sync::Arc, collections::HashMap};
+use std::{collections::HashMap, sync::Arc};
 
 use grid::GridRenderRoutine;
 use math::vector::Vector2;
@@ -68,14 +68,16 @@ struct WindowInfo {
     raw_window: winit::window::Window,
     window_size: winit::dpi::PhysicalSize<u32>,
     surface: Arc<wgpu::Surface>,
-    preferred_texture_format: wgpu::TextureFormat, 
+    preferred_texture_format: wgpu::TextureFormat,
     egui_routine: rend3_egui::EguiRenderRoutine,
     egui_context: egui::Context,
     egui_winit_state: egui_winit::State,
     rend3_renderer: Arc<rend3::Renderer>,
 }
 
-fn create_3d_scene_window(event_loop: &winit::event_loop::EventLoop<()>) -> (winit::window::WindowId, WindowInfo) {
+fn create_3d_scene_window(
+    event_loop: &winit::event_loop::EventLoop<()>,
+) -> (winit::window::WindowId, WindowInfo) {
     let window = {
         let mut builder = winit::window::WindowBuilder::new();
         builder = builder.with_title("rend3 cube");
@@ -221,7 +223,10 @@ fn main() {
     let view = view * glam::Mat4::from_translation(-view_location);
 
     // Set camera's location
-    let mut cam = camera::Camera::initialize(main_window.window_size.width as f32, main_window.window_size.height as f32);
+    let mut cam = camera::Camera::initialize(
+        main_window.window_size.width as f32,
+        main_window.window_size.height as f32,
+    );
     let camera = cam.to_rend3_camera();
 
     // rend3::types::Camera {
@@ -238,21 +243,30 @@ fn main() {
     // );
     main_window.rend3_renderer.set_camera_data(camera);
 
-    let mut grid_render_routine = GridRenderRoutine::new(&main_window.rend3_renderer, main_window.preferred_texture_format.clone());
+    let mut grid_render_routine = GridRenderRoutine::new(
+        &main_window.rend3_renderer,
+        main_window.preferred_texture_format.clone(),
+    );
 
     // Create a single directional light
     //
     // We need to keep the directional light handle alive.
-    let _directional_handle = main_window.rend3_renderer.add_directional_light(rend3::types::DirectionalLight {
-        color: glam::Vec3::ONE,
-        intensity: 10.0,
-        // Direction will be normalized
-        direction: glam::Vec3::new(-1.0, -4.0, 2.0),
-        distance: 400.0,
-        resolution: 2048,
-    });
+    let _directional_handle =
+        main_window
+            .rend3_renderer
+            .add_directional_light(rend3::types::DirectionalLight {
+                color: glam::Vec3::ONE,
+                intensity: 10.0,
+                // Direction will be normalized
+                direction: glam::Vec3::new(-1.0, -4.0, 2.0),
+                distance: 400.0,
+                resolution: 2048,
+            });
 
-    let mut resolution = glam::UVec2::new(main_window.window_size.width, main_window.window_size.height);
+    let mut resolution = glam::UVec2::new(
+        main_window.window_size.width,
+        main_window.window_size.height,
+    );
 
     let mut input_state = input::InputState::default();
     event_loop.run(move |event, _, control| {
@@ -261,7 +275,11 @@ fn main() {
                 let this_window = windows.get_mut(&window_id).unwrap();
 
                 // Pass the window events to the egui integration.
-                if this_window.egui_winit_state.on_event(&this_window.egui_context, &event).consumed {
+                if this_window
+                    .egui_winit_state
+                    .on_event(&this_window.egui_context, &event)
+                    .consumed
+                {
                     return;
                 }
 
@@ -282,13 +300,17 @@ fn main() {
                             rend3::types::PresentMode::Fifo,
                         );
                         // Tell the renderer about the new aspect ratio.
-                        this_window.rend3_renderer.set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
+                        this_window
+                            .rend3_renderer
+                            .set_aspect_ratio(resolution.x as f32 / resolution.y as f32);
 
                         cam.handle_window_resize(
                             physical_size.width as f32,
                             physical_size.height as f32,
                         );
-                        this_window.rend3_renderer.set_camera_data(cam.to_rend3_camera());
+                        this_window
+                            .rend3_renderer
+                            .set_camera_data(cam.to_rend3_camera());
 
                         this_window.egui_routine.resize(
                             physical_size.width,
@@ -370,7 +392,8 @@ fn main() {
                 let w = windows.get_mut(&window_id).unwrap();
 
                 // UI
-                w.egui_context.begin_frame(w.egui_winit_state.take_egui_input(&w.raw_window));
+                w.egui_context
+                    .begin_frame(w.egui_winit_state.take_egui_input(&w.raw_window));
 
                 egui::Window::new("Change color")
                     .resizable(true)
