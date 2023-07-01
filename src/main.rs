@@ -77,6 +77,7 @@ struct WindowInfo {
 
 fn create_3d_scene_window(
     event_loop: &winit::event_loop::EventLoop<()>,
+    iad: rend3::InstanceAdapterDevice,
 ) -> (winit::window::WindowId, WindowInfo) {
     let window = {
         let mut builder = winit::window::WindowBuilder::new();
@@ -85,10 +86,6 @@ fn create_3d_scene_window(
     };
 
     let window_size = window.inner_size();
-
-    // Create the Instance, Adapter, and Device. We can specify preferred backend,
-    // device name, or rendering profile. In this case we let rend3 choose for us.
-    let iad = pollster::block_on(rend3::create_iad(None, None, None, None)).unwrap();
 
     // The one line of unsafe needed. We just need to guarentee that the window
     // outlives the use of the surface.
@@ -151,16 +148,103 @@ fn create_3d_scene_window(
     (window_id, window_info)
 }
 
+fn create_render_window<T>(
+    window_target: &winit::event_loop::EventLoopWindowTarget<T>,
+) -> (winit::window::WindowId, WindowInfo)
+where
+    T: 'static,
+{
+    let window = {
+        let mut builder = winit::window::WindowBuilder::new();
+        builder = builder.with_title("render");
+        builder
+            .build(window_target)
+            .expect("Could not build window")
+    };
+    let window_id = window.id();
+    let window_size = window.inner_size();
+
+    // Create the Instance, Adapter, and Device. We can specify preferred backend,
+    // device name, or rendering profile. In this case we let rend3 choose for us.
+    let iad = pollster::block_on(rend3::create_iad(None, None, None, None)).unwrap();
+
+    // The one line of unsafe needed. We just need to guarentee that the window
+    // outlives the use of the surface.
+    //
+    // SAFETY: this surface _must_ not be used after the `window` dies. Both the
+    // event loop and the renderer are owned by the `run` closure passed to winit,
+    // so rendering work will stop after the window dies.
+    let surface = Arc::new(unsafe { iad.instance.create_surface(&window) }.unwrap());
+    // Get the preferred format for the surface.
+    let caps = surface.get_capabilities(&iad.adapter);
+    let preferred_format = caps.formats[0];
+
+    // Configure the surface to be ready for rendering.
+    rend3::configure_surface(
+        &surface,
+        &iad.device,
+        preferred_format,
+        glam::UVec2::new(window_size.width, window_size.height),
+        rend3::types::PresentMode::Fifo,
+    );
+
+    // Make us a renderer.
+    let renderer = rend3::Renderer::new(
+        iad,
+        rend3::types::Handedness::Left,
+        Some(window_size.width as f32 / window_size.height as f32),
+    )
+    .unwrap();
+
+    // Create the egui render routine
+    let egui_routine = rend3_egui::EguiRenderRoutine::new(
+        &renderer,
+        preferred_format,
+        rend3::types::SampleCount::One,
+        window_size.width,
+        window_size.height,
+        window.scale_factor() as f32,
+    );
+
+    // Create the egui context
+    let context = egui::Context::default();
+
+    // Create the winit/egui integration.
+    //let mut platform = egui_winit::State::new_with_wayland_display(None);
+    let mut platform = egui_winit::State::new(window_target);
+    platform.set_pixels_per_point(window.scale_factor() as f32);
+
+    let window_info = WindowInfo {
+        raw_window: window,
+        window_size,
+        surface,
+        preferred_texture_format: preferred_format,
+        egui_routine,
+        egui_context: context,
+        egui_winit_state: platform,
+        rend3_renderer: renderer,
+    };
+
+    (window_id, window_info)
+}
+
 fn main() {
+    // State
+    let mut render_window_active = false;
+
     // Setup logging
     ui::console::init(log::LevelFilter::Warn).unwrap();
 
     // Create event loop and window
     let event_loop = winit::event_loop::EventLoop::new();
 
+    // Create the Instance, Adapter, and Device. We can specify preferred backend,
+    // device name, or rendering profile. In this case we let rend3 choose for us.
+    let iad = pollster::block_on(rend3::create_iad(None, None, None, None)).unwrap();
+
     let mut windows = HashMap::new();
     let main_window = {
-        let window = create_3d_scene_window(&event_loop);
+        let window = create_3d_scene_window(&event_loop, iad.clone());
         let window_id = window.0;
         windows.insert(window.0, window.1);
 
@@ -269,7 +353,7 @@ fn main() {
     );
 
     let mut input_state = input::InputState::default();
-    event_loop.run(move |event, _, control| {
+    event_loop.run(move |event, window_target, control| {
         match event {
             winit::event::Event::WindowEvent { window_id, event } => {
                 let this_window = windows.get_mut(&window_id).unwrap();
@@ -339,6 +423,13 @@ fn main() {
                                 }
                             }
                         }
+
+                        if keycode == Some(winit::event::VirtualKeyCode::R) && !render_window_active
+                        {
+                            let new_window = create_render_window(window_target);
+                            windows.insert(new_window.0, new_window.1);
+                            render_window_active = true;
+                        }
                     }
 
                     winit::event::WindowEvent::MouseInput {
@@ -389,80 +480,82 @@ fn main() {
 
             // Render!
             winit::event::Event::RedrawRequested(window_id) => {
-                let w = windows.get_mut(&window_id).unwrap();
+                if (window_id == main_window_id) {
+                    let w = windows.get_mut(&window_id).unwrap();
 
-                // UI
-                w.egui_context
-                    .begin_frame(w.egui_winit_state.take_egui_input(&w.raw_window));
+                    // UI
+                    w.egui_context
+                        .begin_frame(w.egui_winit_state.take_egui_input(&w.raw_window));
 
-                egui::Window::new("Change color")
-                    .resizable(true)
-                    .show(&w.egui_context, |ui| {
-                        ui.label("Change the color of the cube");
-                    });
+                    egui::Window::new("Change color")
+                        .resizable(true)
+                        .show(&w.egui_context, |ui| {
+                            ui.label("Change the color of the cube");
+                        });
 
-                egui::Window::new("Console")
-                    .resizable(true)
-                    .show(&w.egui_context, |ui| {
-                        ui::console::draw_egui_console_menu(ui);
-                        ui::console::draw_egui_logging_lines(ui);
-                    });
+                    egui::Window::new("Console")
+                        .resizable(true)
+                        .show(&w.egui_context, |ui| {
+                            ui::console::draw_egui_console_menu(ui);
+                            ui::console::draw_egui_logging_lines(ui);
+                        });
 
-                let egui::FullOutput {
-                    shapes,
-                    textures_delta,
-                    ..
-                } = w.egui_context.end_frame();
+                    let egui::FullOutput {
+                        shapes,
+                        textures_delta,
+                        ..
+                    } = w.egui_context.end_frame();
 
-                let clipped_meshes = &w.egui_context.tessellate(shapes);
+                    let clipped_meshes = &w.egui_context.tessellate(shapes);
 
-                let input = rend3_egui::Input {
-                    clipped_meshes,
-                    textures_delta,
-                    context: w.egui_context.clone(),
-                };
+                    let input = rend3_egui::Input {
+                        clipped_meshes,
+                        textures_delta,
+                        context: w.egui_context.clone(),
+                    };
 
-                // Get a frame
-                let frame = w.surface.get_current_texture().unwrap();
+                    // Get a frame
+                    let frame = w.surface.get_current_texture().unwrap();
 
-                // Swap the instruction buffers so that our frame's changes can be processed.
-                w.rend3_renderer.swap_instruction_buffers();
-                // Evaluate our frame's world-change instructions
-                let mut eval_output = w.rend3_renderer.evaluate_instructions();
+                    // Swap the instruction buffers so that our frame's changes can be processed.
+                    w.rend3_renderer.swap_instruction_buffers();
+                    // Evaluate our frame's world-change instructions
+                    let mut eval_output = w.rend3_renderer.evaluate_instructions();
 
-                // Build a rendergraph
-                let mut graph = rend3::graph::RenderGraph::new();
+                    // Build a rendergraph
+                    let mut graph = rend3::graph::RenderGraph::new();
 
-                // Import the surface texture into the render graph.
-                let frame_handle = graph.add_imported_render_target(
-                    &frame,
-                    0..1,
-                    rend3::graph::ViewportRect::from_size(resolution),
-                );
-                // Add the default rendergraph without a skybox
-                let depth_target_handle = base_rendergraph.add_to_graph(
-                    &mut graph,
-                    &eval_output,
-                    &pbr_routine,
-                    None,
-                    &tonemapping_routine,
-                    frame_handle,
-                    resolution,
-                    rend3::types::SampleCount::One,
-                    glam::Vec4::ZERO,
-                    glam::Vec4::new(0.10, 0.05, 0.10, 1.0), // Nice scene-referred purple
-                );
+                    // Import the surface texture into the render graph.
+                    let frame_handle = graph.add_imported_render_target(
+                        &frame,
+                        0..1,
+                        rend3::graph::ViewportRect::from_size(resolution),
+                    );
+                    // Add the default rendergraph without a skybox
+                    let depth_target_handle = base_rendergraph.add_to_graph(
+                        &mut graph,
+                        &eval_output,
+                        &pbr_routine,
+                        None,
+                        &tonemapping_routine,
+                        frame_handle,
+                        resolution,
+                        rend3::types::SampleCount::One,
+                        glam::Vec4::ZERO,
+                        glam::Vec4::new(0.10, 0.05, 0.10, 1.0), // Nice scene-referred purple
+                    );
 
-                grid_render_routine.add_to_graph(&mut graph, depth_target_handle, frame_handle);
-                w.egui_routine.add_to_graph(&mut graph, input, frame_handle);
+                    grid_render_routine.add_to_graph(&mut graph, depth_target_handle, frame_handle);
+                    w.egui_routine.add_to_graph(&mut graph, input, frame_handle);
 
-                // Dispatch a render using the built up rendergraph!
-                graph.execute(&w.rend3_renderer, &mut eval_output);
+                    // Dispatch a render using the built up rendergraph!
+                    graph.execute(&w.rend3_renderer, &mut eval_output);
 
-                // Present the frame
-                frame.present();
+                    // Present the frame
+                    frame.present();
 
-                control.set_poll(); // default behavior
+                    control.set_poll(); // default behavior
+                }
             }
 
             // Other events we don't care about
