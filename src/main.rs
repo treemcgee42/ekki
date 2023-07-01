@@ -11,6 +11,24 @@ mod input;
 mod math;
 mod ui;
 
+struct MyImage {
+    texture: Option<egui::TextureHandle>,
+}
+
+impl MyImage {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        let texture: &egui::TextureHandle = self.texture.get_or_insert_with(|| {
+            // Load the texture only once.
+            ui.ctx()
+                .load_texture("my-image", egui::ColorImage::example(), Default::default())
+        });
+
+        // Shorter version:
+        // ui.image(texture, texture.size_vec2());
+        ui.image(texture, ui.available_size());
+    }
+}
+
 fn vertex(pos: [f32; 3]) -> glam::Vec3 {
     glam::Vec3::from(pos)
 }
@@ -231,6 +249,7 @@ where
 fn main() {
     // State
     let mut render_window_active = false;
+    let mut render_texture = MyImage { texture: None };
 
     // Setup logging
     ui::console::init(log::LevelFilter::Warn).unwrap();
@@ -546,6 +565,61 @@ fn main() {
                     );
 
                     grid_render_routine.add_to_graph(&mut graph, depth_target_handle, frame_handle);
+                    w.egui_routine.add_to_graph(&mut graph, input, frame_handle);
+
+                    // Dispatch a render using the built up rendergraph!
+                    graph.execute(&w.rend3_renderer, &mut eval_output);
+
+                    // Present the frame
+                    frame.present();
+
+                    control.set_poll(); // default behavior
+                } else {
+                    let w = windows.get_mut(&window_id).unwrap();
+
+                    // UI
+                    w.egui_context
+                        .begin_frame(w.egui_winit_state.take_egui_input(&w.raw_window));
+
+                    egui::TopBottomPanel::top("my_panel").show(&w.egui_context, |ui| {
+                       ui.label("Hello World! From `TopBottomPanel`, that must be before `CentralPanel`!");
+                    });
+                    egui::CentralPanel::default().show(&w.egui_context, |ui| {
+                        render_texture.ui(ui);
+                    });
+
+                    let egui::FullOutput {
+                        shapes,
+                        textures_delta,
+                        ..
+                    } = w.egui_context.end_frame();
+
+                    let clipped_meshes = &w.egui_context.tessellate(shapes);
+
+                    let input = rend3_egui::Input {
+                        clipped_meshes,
+                        textures_delta,
+                        context: w.egui_context.clone(),
+                    };
+
+                    // Get a frame
+                    let frame = w.surface.get_current_texture().unwrap();
+
+                    // Swap the instruction buffers so that our frame's changes can be processed.
+                    w.rend3_renderer.swap_instruction_buffers();
+                    // Evaluate our frame's world-change instructions
+                    let mut eval_output = w.rend3_renderer.evaluate_instructions();
+
+                    // Build a rendergraph
+                    let mut graph = rend3::graph::RenderGraph::new();
+
+                    // Import the surface texture into the render graph.
+                    let frame_handle = graph.add_imported_render_target(
+                        &frame,
+                        0..1,
+                        rend3::graph::ViewportRect::from_size(resolution),
+                    );
+
                     w.egui_routine.add_to_graph(&mut graph, input, frame_handle);
 
                     // Dispatch a render using the built up rendergraph!
