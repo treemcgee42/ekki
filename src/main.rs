@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use math::vector::Vector2;
-use window::WindowLike;
+use window::{SceneViewer3D, StartupWindow, WindowLike};
 
 mod base;
 mod camera;
@@ -83,6 +83,15 @@ fn create_mesh() -> rend3::types::Mesh {
         .unwrap()
 }
 
+pub enum WindowRedrawCallbackCommand {
+    Create3DWindowAndClose,
+}
+
+pub enum WindowCloseCallbackCommand {
+    Close,
+    QuitProgram,
+}
+
 fn main() {
     // State
     let mut render_window_active = false;
@@ -92,21 +101,24 @@ fn main() {
 
     // Create event loop and window
     let event_loop = winit::event_loop::EventLoop::new();
+    let mut input_state = input::InputState::default();
 
     let mut windows: HashMap<winit::window::WindowId, Box<dyn window::WindowLike>> = HashMap::new();
-    let main_window = {
-        let window = window::SceneViewer3D::create(&event_loop);
-        let window_id = window.get_window_id();
-        windows.insert(window.get_window_id(), Box::new(window));
+    {
+        let startup_window = StartupWindow::create(&event_loop);
+        windows.insert(startup_window.get_window_id(), Box::new(startup_window));
+    }
 
-        windows.get_mut(&window_id).unwrap()
-    };
-    let main_window_id = main_window.get_window_id();
+    let mut recently_closed_windows = Vec::new();
 
-    let mut input_state = input::InputState::default();
+    // Do event loop.
     event_loop.run(move |event, window_target, control| {
         match event {
             winit::event::Event::WindowEvent { window_id, event } => {
+                if recently_closed_windows.contains(&window_id) {
+                    return;
+                }
+
                 let this_window = windows.get_mut(&window_id).unwrap();
 
                 // Pass the window events to the egui integration.
@@ -117,7 +129,17 @@ fn main() {
                 match event {
                     // Close button was clicked, we should close.
                     winit::event::WindowEvent::CloseRequested => {
-                        *control = winit::event_loop::ControlFlow::Exit;
+                        match this_window.close_requested() {
+                            WindowCloseCallbackCommand::Close => {
+                                windows.remove(&window_id);
+                                recently_closed_windows.push(window_id);
+                                return;
+                            }
+
+                            WindowCloseCallbackCommand::QuitProgram => {
+                                *control = winit::event_loop::ControlFlow::Exit;
+                            }
+                        }
                     }
                     // Window was resized, need to resize renderer.
                     winit::event::WindowEvent::Resized(physical_size) => {
@@ -157,7 +179,7 @@ fn main() {
                         device_id: _,
                         state,
                         button,
-                        modifiers: _,
+                        ..
                     } => {
                         if button == winit::event::MouseButton::Left {
                             match state {
@@ -201,8 +223,23 @@ fn main() {
 
             // Render!
             winit::event::Event::RedrawRequested(window_id) => {
-                let w = windows.get_mut(&window_id).unwrap();
-                w.redraw();
+                let (callbacks, id) = {
+                    let w = windows.get_mut(&window_id).unwrap();
+                    (w.redraw(), w.get_window_id())
+                };
+
+                if let Some(calls) = callbacks {
+                    for callback in calls {
+                        match callback {
+                            WindowRedrawCallbackCommand::Create3DWindowAndClose => {
+                                windows.remove(&id);
+                                recently_closed_windows.push(id);
+                                let new_window = SceneViewer3D::create(window_target);
+                                windows.insert(new_window.get_window_id(), Box::new(new_window));
+                            }
+                        }
+                    }
+                }
 
                 control.set_poll(); // default behavior
             }
@@ -211,9 +248,10 @@ fn main() {
             _ => {}
         }
 
-        let w = windows.get_mut(&main_window_id).unwrap();
-        for input_event in input_state.get_input_events() {
-            w.handle_input_event(&input_state, input_event)
+        for w in windows.values_mut() {
+            for input_event in input_state.get_input_events() {
+                w.handle_input_event(&input_state, input_event)
+            }
         }
         input_state.reset_release_events();
     });
