@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use math::vector::Vector2;
-use window::{SceneViewer3D, StartupWindow, WindowLike};
+use window::{NodeMapWindow, SceneViewer3D, StartupWindow, WindowLike};
 
 mod base;
 mod camera;
@@ -85,6 +85,7 @@ fn create_mesh() -> rend3::types::Mesh {
 
 pub enum WindowRedrawCallbackCommand {
     Create3DWindowAndClose,
+    CreateNodeMapWindowAndClose,
 }
 
 pub enum WindowCloseCallbackCommand {
@@ -235,6 +236,13 @@ fn main() {
                                 windows.remove(&id);
                                 recently_closed_windows.push(id);
                                 let new_window = SceneViewer3D::create(window_target);
+                                windows.insert(new_window.get_window_id(), Box::new(new_window));
+                            }
+
+                            WindowRedrawCallbackCommand::CreateNodeMapWindowAndClose => {
+                                windows.remove(&id);
+                                recently_closed_windows.push(id);
+                                let new_window = NodeMapWindow::create(window_target);
                                 windows.insert(new_window.get_window_id(), Box::new(new_window));
                             }
                         }
