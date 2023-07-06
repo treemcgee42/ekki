@@ -226,7 +226,7 @@ impl WindowLike for StartupWindow {
 
                         if columns[0]
                             .add(
-                                egui::Label::new(egui::RichText::new("👾 2D scene").size(18.))
+                                egui::Label::new(egui::RichText::new("☔ Node map").size(18.))
                                     .sense(egui::Sense::click()),
                             )
                             .clicked()
@@ -234,7 +234,7 @@ impl WindowLike for StartupWindow {
                             callbacks
                                 .push(WindowRedrawCallbackCommand::CreateNodeMapWindowAndClose);
                         }
-                        columns[0].label(egui::RichText::new("☔ Node map").size(18.));
+                        columns[0].label(egui::RichText::new("👾 2D scene").size(18.));
                         columns[0].label(egui::RichText::new("🎩 Plugin editor").size(18.));
                         columns[0].label(egui::RichText::new("🌺 Hibiscus").size(18.));
 
