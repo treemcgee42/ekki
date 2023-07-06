@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use math::vector::Vector2;
-use window::{NodeMapWindow, SceneViewer3D, StartupWindow, WindowLike};
+use ui::windows::{
+    node_map::NodeMapWindow, render::RenderWindow, scene_viewer_3d::SceneViewer3D,
+    startup::StartupWindow, WindowLike,
+};
 
 mod base;
 mod camera;
@@ -10,7 +13,6 @@ mod grid;
 mod input;
 mod math;
 mod ui;
-mod window;
 
 struct MyImage {
     texture: Option<egui::TextureHandle>,
@@ -104,7 +106,7 @@ fn main() {
     let event_loop = winit::event_loop::EventLoop::new();
     let mut input_state = input::InputState::default();
 
-    let mut windows: HashMap<winit::window::WindowId, Box<dyn window::WindowLike>> = HashMap::new();
+    let mut windows: HashMap<winit::window::WindowId, Box<dyn WindowLike>> = HashMap::new();
     {
         let startup_window = StartupWindow::create(&event_loop);
         windows.insert(startup_window.get_window_id(), Box::new(startup_window));
@@ -170,7 +172,7 @@ fn main() {
 
                         if keycode == Some(winit::event::VirtualKeyCode::R) && !render_window_active
                         {
-                            let new_window = window::RenderWindow::create(window_target);
+                            let new_window = RenderWindow::create(window_target);
                             windows.insert(new_window.get_window_id(), Box::new(new_window));
                             render_window_active = true;
                         }
