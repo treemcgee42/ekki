@@ -524,6 +524,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_node_graph"
+version = "0.4.0"
+source = "git+https://github.com/setzer22/egui_node_graph/?rev=3068b8c#3068b8cd9bad3a419682af273c01cd700bda2739"
+dependencies = [
+ "egui",
+ "slotmap",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
 name = "emath"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -631,6 +642,7 @@ dependencies = [
  "bytemuck",
  "egui",
  "egui-winit",
+ "egui_node_graph",
  "encase",
  "env_logger",
  "glam",

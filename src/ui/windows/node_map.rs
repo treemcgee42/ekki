@@ -10,7 +10,7 @@ pub struct NodeMapWindow {
 // ==== EXAMPLE {{{1
 
 use egui_node_graph::*;
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, rc::Rc};
 
 // ========= First, define your user data types =============
 
@@ -30,6 +30,8 @@ pub struct MyNodeData {
 pub enum MyDataType {
     Scalar,
     Vec2,
+    SceneData,
+    Str,
 }
 
 /// In the graph, input parameters can optionally have a constant value. This
@@ -39,11 +41,13 @@ pub enum MyDataType {
 /// this library makes no attempt to check this consistency. For instance, it is
 /// up to the user code in this example to make sure no parameter is created
 /// with a DataType of Scalar and a ValueType of Vec2.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
 pub enum MyValueType {
     Vec2 { value: egui::Vec2 },
     Scalar { value: f32 },
+    SceneData { value: f32 },
+    Str { value: String },
 }
 
 impl Default for MyValueType {
@@ -72,12 +76,20 @@ impl MyValueType {
             anyhow::bail!("Invalid cast from {:?} to scalar", self)
         }
     }
+
+    pub fn try_to_string(self) -> anyhow::Result<String> {
+        if let MyValueType::Str { value } = self {
+            Ok(value)
+        } else {
+            anyhow::bail!("Invalid cast from {:?} to String", self)
+        }
+    }
 }
 
 /// NodeTemplate is a mechanism to define node templates. It's what the graph
 /// will display in the "new node" popup. The user code needs to tell the
 /// library how to convert a NodeTemplate into a Node.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
 pub enum MyNodeTemplate {
     MakeScalar,
@@ -87,6 +99,9 @@ pub enum MyNodeTemplate {
     AddVector,
     SubtractVector,
     VectorTimesScalar,
+    ThreeDScene,
+    JsonConverter,
+    Stdout,
 }
 
 /// The response type is used to encode side-effects produced when drawing a
@@ -97,6 +112,7 @@ pub enum MyNodeTemplate {
 pub enum MyResponse {
     SetActiveNode(NodeId),
     ClearActiveNode,
+    Open3DSceneEditor,
 }
 
 /// The graph 'global' state. This state struct is passed around to the node and
@@ -116,6 +132,8 @@ impl DataTypeTrait<MyGraphState> for MyDataType {
         match self {
             MyDataType::Scalar => egui::Color32::from_rgb(38, 109, 211),
             MyDataType::Vec2 => egui::Color32::from_rgb(238, 207, 109),
+            MyDataType::SceneData => egui::Color32::from_rgb(38, 109, 211),
+            MyDataType::Str => egui::Color32::from_rgb(238, 207, 109),
         }
     }
 
@@ -123,6 +141,8 @@ impl DataTypeTrait<MyGraphState> for MyDataType {
         match self {
             MyDataType::Scalar => Cow::Borrowed("scalar"),
             MyDataType::Vec2 => Cow::Borrowed("2d vector"),
+            MyDataType::SceneData => Cow::Borrowed("Scene data"),
+            MyDataType::Str => Cow::Borrowed("String"),
         }
     }
 }
@@ -145,6 +165,9 @@ impl NodeTemplateTrait for MyNodeTemplate {
             MyNodeTemplate::AddVector => "Vector add",
             MyNodeTemplate::SubtractVector => "Vector subtract",
             MyNodeTemplate::VectorTimesScalar => "Vector times scalar",
+            MyNodeTemplate::ThreeDScene => "3D scene",
+            MyNodeTemplate::JsonConverter => "JSON converter",
+            MyNodeTemplate::Stdout => "Stdout",
         })
     }
 
@@ -158,6 +181,9 @@ impl NodeTemplateTrait for MyNodeTemplate {
             | MyNodeTemplate::AddVector
             | MyNodeTemplate::SubtractVector => vec!["Vector"],
             MyNodeTemplate::VectorTimesScalar => vec!["Vector", "Scalar"],
+            MyNodeTemplate::ThreeDScene
+            | MyNodeTemplate::JsonConverter
+            | MyNodeTemplate::Stdout => vec!["Scene"],
         }
     }
 
@@ -204,12 +230,40 @@ impl NodeTemplateTrait for MyNodeTemplate {
                 true,
             );
         };
+        let input_scenedata = |graph: &mut MyGraph, name: &str| {
+            graph.add_input_param(
+                node_id,
+                name.to_string(),
+                MyDataType::SceneData,
+                MyValueType::SceneData { value: 3.0 },
+                InputParamKind::ConnectionOnly,
+                true,
+            );
+        };
+        let input_str = |graph: &mut MyGraph, name: &str| {
+            graph.add_input_param(
+                node_id,
+                name.to_string(),
+                MyDataType::Str,
+                MyValueType::Str {
+                    value: "".to_string(),
+                },
+                InputParamKind::ConnectionOnly,
+                true,
+            )
+        };
 
         let output_scalar = |graph: &mut MyGraph, name: &str| {
             graph.add_output_param(node_id, name.to_string(), MyDataType::Scalar);
         };
         let output_vector = |graph: &mut MyGraph, name: &str| {
             graph.add_output_param(node_id, name.to_string(), MyDataType::Vec2);
+        };
+        let output_scenedata = |graph: &mut MyGraph, name: &str| {
+            graph.add_output_param(node_id, name.to_string(), MyDataType::SceneData);
+        };
+        let output_str = |graph: &mut MyGraph, name: &str| {
+            graph.add_output_param(node_id, name.to_string(), MyDataType::Str);
         };
 
         match self {
@@ -263,6 +317,16 @@ impl NodeTemplateTrait for MyNodeTemplate {
                 input_scalar(graph, "value");
                 output_scalar(graph, "out");
             }
+            MyNodeTemplate::ThreeDScene => {
+                output_scenedata(graph, "Scene data");
+            }
+            MyNodeTemplate::JsonConverter => {
+                input_scenedata(graph, "Scene data");
+                output_str(graph, "string");
+            }
+            MyNodeTemplate::Stdout => {
+                input_str(graph, "string");
+            }
         }
     }
 }
@@ -283,6 +347,9 @@ impl NodeTemplateIter for AllMyNodeTemplates {
             MyNodeTemplate::AddVector,
             MyNodeTemplate::SubtractVector,
             MyNodeTemplate::VectorTimesScalar,
+            MyNodeTemplate::ThreeDScene,
+            MyNodeTemplate::JsonConverter,
+            MyNodeTemplate::Stdout,
         ]
     }
 }
@@ -316,6 +383,12 @@ impl WidgetValueTrait for MyValueType {
                     ui.label(param_name);
                     ui.add(egui::DragValue::new(value));
                 });
+            }
+            MyValueType::SceneData { value: _ } => {
+                ui.label(param_name);
+            }
+            MyValueType::Str { value: _ } => {
+                ui.label(param_name);
             }
         }
         // This allows you to return your responses from the inline widgets.
@@ -356,20 +429,32 @@ impl NodeDataTrait for MyNodeData {
             .map(|id| id == node_id)
             .unwrap_or(false);
 
-        // Pressing the button will emit a custom user response to either set,
-        // or clear the active node. These responses do nothing by themselves,
-        // the library only makes the responses available to you after the graph
-        // has been drawn. See below at the update method for an example.
-        if !is_active {
-            if ui.button("👁 Set active").clicked() {
-                responses.push(NodeResponse::User(MyResponse::SetActiveNode(node_id)));
+        let is_threedscene_node = _graph
+            .nodes
+            .get(node_id)
+            .map(|node| node.user_data.template == MyNodeTemplate::ThreeDScene)
+            .unwrap_or(false);
+
+        if is_threedscene_node {
+            if ui.button("Edit").clicked() {
+                responses.push(NodeResponse::User(MyResponse::Open3DSceneEditor));
             }
         } else {
-            let button =
-                egui::Button::new(egui::RichText::new("👁 Active").color(egui::Color32::BLACK))
-                    .fill(egui::Color32::GOLD);
-            if ui.add(button).clicked() {
-                responses.push(NodeResponse::User(MyResponse::ClearActiveNode));
+            // Pressing the button will emit a custom user response to either set,
+            // or clear the active node. These responses do nothing by themselves,
+            // the library only makes the responses available to you after the graph
+            // has been drawn. See below at the update method for an example.
+            if !is_active {
+                if ui.button("👁 Set active").clicked() {
+                    responses.push(NodeResponse::User(MyResponse::SetActiveNode(node_id)));
+                }
+            } else {
+                let button =
+                    egui::Button::new(egui::RichText::new("👁 Active").color(egui::Color32::BLACK))
+                        .fill(egui::Color32::GOLD);
+                if ui.add(button).clicked() {
+                    responses.push(NodeResponse::User(MyResponse::ClearActiveNode));
+                }
             }
         }
 
@@ -466,11 +551,28 @@ pub fn evaluate_node(
         fn input_scalar(&mut self, name: &str) -> anyhow::Result<f32> {
             self.evaluate_input(name)?.try_to_scalar()
         }
+        fn input_scenedata(&mut self, name: &str) -> anyhow::Result<f32> {
+            let input = self.evaluate_input(name)?;
+            match input {
+                MyValueType::SceneData { value } => Ok(value),
+                i => anyhow::bail!("can't convert {:?} to scalar", i),
+            }
+        }
+        fn input_str(&mut self, name: &str) -> anyhow::Result<String> {
+            self.evaluate_input(name)?.try_to_string()
+        }
+
         fn output_vector(&mut self, name: &str, value: egui::Vec2) -> anyhow::Result<MyValueType> {
             self.populate_output(name, MyValueType::Vec2 { value })
         }
         fn output_scalar(&mut self, name: &str, value: f32) -> anyhow::Result<MyValueType> {
             self.populate_output(name, MyValueType::Scalar { value })
+        }
+        fn output_scenedata(&mut self, name: &str, value: f32) -> anyhow::Result<MyValueType> {
+            self.populate_output(name, MyValueType::SceneData { value })
+        }
+        fn output_str(&mut self, name: &str, value: String) -> anyhow::Result<MyValueType> {
+            self.populate_output(name, MyValueType::Str { value })
         }
     }
 
@@ -509,7 +611,19 @@ pub fn evaluate_node(
         }
         MyNodeTemplate::MakeScalar => {
             let value = evaluator.input_scalar("value")?;
-            evaluator.output_scalar("out", value)
+            evaluator.output_scalar("Scene data", value)
+        }
+        MyNodeTemplate::ThreeDScene => evaluator.output_scenedata("Scene data", 2.0),
+        MyNodeTemplate::JsonConverter => {
+            let value = evaluator.input_scenedata("Scene data")?;
+            evaluator.output_str("string", value.to_string())
+        }
+        MyNodeTemplate::Stdout => {
+            let value = evaluator.input_str("string")?;
+            println!("{}", value);
+            Ok(MyValueType::Str {
+                value: "printed to stdout".to_string(),
+            })
         }
     }
 }
@@ -522,7 +636,7 @@ fn populate_output(
     value: MyValueType,
 ) -> anyhow::Result<MyValueType> {
     let output_id = graph[node_id].get_output(param_name)?;
-    outputs_cache.insert(output_id, value);
+    outputs_cache.insert(output_id, value.clone());
     Ok(value)
 }
 
@@ -540,7 +654,8 @@ fn evaluate_input(
         // The value was already computed due to the evaluation of some other
         // node. We simply return value from the cache.
         if let Some(other_value) = outputs_cache.get(&other_output_id) {
-            Ok(*other_value)
+            let v = other_value.clone();
+            Ok(v)
         }
         // This is the first time encountering this node, so we need to
         // recursively evaluate it.
@@ -549,14 +664,15 @@ fn evaluate_input(
             evaluate_node(graph, graph[other_output_id].node, outputs_cache)?;
 
             // Now that we know the value is cached, return it
-            Ok(*outputs_cache
+            let v = (*outputs_cache)
                 .get(&other_output_id)
-                .expect("Cache should be populated"))
+                .expect("Cache should be populated");
+            Ok(v.clone())
         }
     }
     // No existing connection, take the inline value instead.
     else {
-        Ok(graph[input_id].value)
+        Ok(graph[input_id].value.clone())
     }
 }
 
@@ -699,6 +815,8 @@ impl WindowLike for NodeMapWindow {
     }
 
     fn redraw(&mut self) -> Option<Vec<WindowRedrawCallbackCommand>> {
+        let mut callbacks = Vec::new();
+
         // UI
         self.info.egui_context.begin_frame(
             self.info
@@ -734,6 +852,9 @@ impl WindowLike for NodeMapWindow {
                     }
                     MyResponse::ClearActiveNode => {
                         self.node_graph_example.user_state.active_node = None
+                    }
+                    MyResponse::Open3DSceneEditor => {
+                        callbacks.push(WindowRedrawCallbackCommand::Create3DWindow)
                     }
                 }
             }
@@ -805,6 +926,10 @@ impl WindowLike for NodeMapWindow {
         // Present the frame
         frame.present();
 
-        None
+        if callbacks.is_empty() {
+            None
+        } else {
+            Some(callbacks)
+        }
     }
 }

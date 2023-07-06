@@ -86,6 +86,7 @@ fn create_mesh() -> rend3::types::Mesh {
 }
 
 pub enum WindowRedrawCallbackCommand {
+    Create3DWindow,
     Create3DWindowAndClose,
     CreateNodeMapWindowAndClose,
 }
@@ -112,6 +113,7 @@ fn main() {
         windows.insert(startup_window.get_window_id(), Box::new(startup_window));
     }
 
+    // TODO: never cleared
     let mut recently_closed_windows = Vec::new();
 
     // Do event loop.
@@ -234,6 +236,11 @@ fn main() {
                 if let Some(calls) = callbacks {
                     for callback in calls {
                         match callback {
+                            WindowRedrawCallbackCommand::Create3DWindow => {
+                                let new_window = SceneViewer3D::create(window_target);
+                                windows.insert(new_window.get_window_id(), Box::new(new_window));
+                            }
+
                             WindowRedrawCallbackCommand::Create3DWindowAndClose => {
                                 windows.remove(&id);
                                 recently_closed_windows.push(id);

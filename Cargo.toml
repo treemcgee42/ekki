@@ -27,6 +27,7 @@ winit = "0.28"
 # gui 
 egui = "0.21.0"
 egui-winit = "0.21.1"
+egui_node_graph = { git = "https://github.com/setzer22/egui_node_graph/", rev = "3068b8c" }
 
 libloading = "0.8.0"
 anyhow = "1.0.70"
