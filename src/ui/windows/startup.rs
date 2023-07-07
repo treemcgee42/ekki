@@ -1,9 +1,7 @@
 use super::*;
 
 pub struct StartupWindow {
-    id: winit::window::WindowId,
     info: WindowInfo,
-    resolution: glam::UVec2,
     texture: MyImage,
 }
 
@@ -12,6 +10,7 @@ impl StartupWindow {
     where
         T: 'static,
     {
+        // Center window, specify size
         let (target_window_size, target_window_position) = {
             let monitor_size = window_target.primary_monitor().unwrap().size();
 
@@ -49,91 +48,18 @@ impl StartupWindow {
             }
         };
 
-        let window = {
-            let builder = winit::window::WindowBuilder::new();
-            builder
-                .with_title("ekki")
-                .with_inner_size(target_window_size)
-                .with_decorations(false)
-                .with_position(target_window_position)
-                .build(window_target)
-                .expect("Could not build window")
+        let window_init_info = WindowInfoInitializeInfo {
+            title: "ekki".to_string(),
+            inner_size: Some(target_window_size),
+            with_decorations: false,
+            with_position: Some(target_window_position),
         };
-        let window_id = window.id();
-        let window_size = window.inner_size();
-
-        // Create the Instance, Adapter, and Device. We can specify preferred backend,
-        // device name, or rendering profile. In this case we let rend3 choose for us.
-        let iad = pollster::block_on(rend3::create_iad(None, None, None, None)).unwrap();
-
-        // The one line of unsafe needed. We just need to guarentee that the window
-        // outlives the use of the surface.
-        //
-        // SAFETY: this surface _must_ not be used after the `window` dies. Both the
-        // event loop and the renderer are owned by the `run` closure passed to winit,
-        // so rendering work will stop after the window dies.
-        let surface = Arc::new(unsafe { iad.instance.create_surface(&window) }.unwrap());
-        // Get the preferred format for the surface.
-        let caps = surface.get_capabilities(&iad.adapter);
-        let preferred_format = caps.formats[0];
-
-        // Configure the surface to be ready for rendering.
-        rend3::configure_surface(
-            &surface,
-            &iad.device,
-            preferred_format,
-            glam::UVec2::new(window_size.width, window_size.height),
-            rend3::types::PresentMode::Fifo,
-        );
-
-        // Make us a renderer.
-        let renderer = rend3::Renderer::new(
-            iad,
-            rend3::types::Handedness::Left,
-            Some(window_size.width as f32 / window_size.height as f32),
-        )
-        .unwrap();
-
-        // Create the egui render routine
-        let egui_routine = rend3_egui::EguiRenderRoutine::new(
-            &renderer,
-            preferred_format,
-            rend3::types::SampleCount::One,
-            window_size.width,
-            window_size.height,
-            window.scale_factor() as f32,
-        );
-
-        // Create the egui context
-        let context = egui::Context::default();
-        // context.set_pixels_per_point(window.scale_factor() as f32);
-
-        // Create the winit/egui integration.
-        let mut platform = egui_winit::State::new(window_target);
-        platform.set_pixels_per_point(window.scale_factor() as f32);
-
-        let window_info = WindowInfo {
-            raw_window: window,
-            window_size,
-            surface,
-            preferred_texture_format: preferred_format,
-            egui_routine,
-            egui_context: context,
-            egui_winit_state: platform,
-            rend3_renderer: renderer,
-        };
-
-        let resolution = glam::UVec2::new(
-            window_info.window_size.width,
-            window_info.window_size.height,
-        );
+        let window_info = WindowInfo::initialize(window_target, window_init_info);
 
         let texture = MyImage { texture: None };
 
         Self {
-            id: window_id,
             info: window_info,
-            resolution,
             texture,
         }
     }
@@ -141,7 +67,7 @@ impl StartupWindow {
 
 impl WindowLike for StartupWindow {
     fn get_window_id(&self) -> winit::window::WindowId {
-        self.id
+        self.info.window_id
     }
 
     fn handle_input_event(&mut self, _input_state: &InputState, _input_event: input::InputEvent) {}
@@ -158,25 +84,7 @@ impl WindowLike for StartupWindow {
     }
 
     fn resize(&mut self, physical_size: winit::dpi::PhysicalSize<u32>) {
-        self.resolution = glam::UVec2::new(physical_size.width, physical_size.height);
-        // Reconfigure the surface for the new size.
-        rend3::configure_surface(
-            &self.info.surface,
-            &self.info.rend3_renderer.device,
-            self.info.preferred_texture_format,
-            glam::UVec2::new(self.resolution.x, self.resolution.y),
-            rend3::types::PresentMode::Fifo,
-        );
-        // Tell the renderer about the new aspect ratio.
-        self.info
-            .rend3_renderer
-            .set_aspect_ratio(self.resolution.x as f32 / self.resolution.y as f32);
-
-        self.info.egui_routine.resize(
-            physical_size.width,
-            physical_size.height,
-            self.info.raw_window.scale_factor() as f32,
-        );
+        self.info.resize_default(physical_size);
     }
 
     fn redraw(&mut self) -> Option<Vec<WindowRedrawCallbackCommand>> {
@@ -284,7 +192,7 @@ impl WindowLike for StartupWindow {
         let frame_handle = graph.add_imported_render_target(
             &frame,
             0..1,
-            rend3::graph::ViewportRect::from_size(self.resolution),
+            rend3::graph::ViewportRect::from_size(self.info.resolution),
         );
 
         self.info

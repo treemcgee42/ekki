@@ -1,16 +1,14 @@
 use super::*;
 
 pub struct NodeMapWindow {
-    id: winit::window::WindowId,
     info: WindowInfo,
-    resolution: glam::UVec2,
     node_graph_example: NodeGraphExample,
 }
 
 // ==== EXAMPLE {{{1
 
 use egui_node_graph::*;
-use std::{borrow::Cow, collections::HashMap, rc::Rc};
+use std::{borrow::Cow, collections::HashMap};
 
 // ========= First, define your user data types =============
 
@@ -20,6 +18,24 @@ use std::{borrow::Cow, collections::HashMap, rc::Rc};
 #[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
 pub struct MyNodeData {
     template: MyNodeTemplate,
+}
+
+/// NodeTemplate is a mechanism to define node templates. It's what the graph
+/// will display in the "new node" popup. The user code needs to tell the
+/// library how to convert a NodeTemplate into a Node.
+#[derive(Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
+pub enum MyNodeTemplate {
+    MakeScalar,
+    AddScalar,
+    SubtractScalar,
+    MakeVector,
+    AddVector,
+    SubtractVector,
+    VectorTimesScalar,
+    ThreeDScene,
+    JsonConverter,
+    Stdout,
 }
 
 /// `DataType`s are what defines the possible range of connections when
@@ -84,24 +100,6 @@ impl MyValueType {
             anyhow::bail!("Invalid cast from {:?} to String", self)
         }
     }
-}
-
-/// NodeTemplate is a mechanism to define node templates. It's what the graph
-/// will display in the "new node" popup. The user code needs to tell the
-/// library how to convert a NodeTemplate into a Node.
-#[derive(Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "persistence", derive(serde::Serialize, serde::Deserialize))]
-pub enum MyNodeTemplate {
-    MakeScalar,
-    AddScalar,
-    SubtractScalar,
-    MakeVector,
-    AddVector,
-    SubtractVector,
-    VectorTimesScalar,
-    ThreeDScene,
-    JsonConverter,
-    Stdout,
 }
 
 /// The response type is used to encode side-effects produced when drawing a
@@ -683,88 +681,16 @@ impl NodeMapWindow {
     where
         T: 'static,
     {
-        let window = {
-            let builder = winit::window::WindowBuilder::new();
-            builder
-                .with_title("node map")
-                .build(window_target)
-                .expect("Could not build window")
+        let window_init_info = WindowInfoInitializeInfo {
+            title: "node map".to_string(),
+            ..Default::default()
         };
-        let window_id = window.id();
-        let window_size = window.inner_size();
-
-        // Create the Instance, Adapter, and Device. We can specify preferred backend,
-        // device name, or rendering profile. In this case we let rend3 choose for us.
-        let iad = pollster::block_on(rend3::create_iad(None, None, None, None)).unwrap();
-
-        // The one line of unsafe needed. We just need to guarentee that the window
-        // outlives the use of the surface.
-        //
-        // SAFETY: this surface _must_ not be used after the `window` dies. Both the
-        // event loop and the renderer are owned by the `run` closure passed to winit,
-        // so rendering work will stop after the window dies.
-        let surface = Arc::new(unsafe { iad.instance.create_surface(&window) }.unwrap());
-        // Get the preferred format for the surface.
-        let caps = surface.get_capabilities(&iad.adapter);
-        let preferred_format = caps.formats[0];
-
-        // Configure the surface to be ready for rendering.
-        rend3::configure_surface(
-            &surface,
-            &iad.device,
-            preferred_format,
-            glam::UVec2::new(window_size.width, window_size.height),
-            rend3::types::PresentMode::Fifo,
-        );
-
-        // Make us a renderer.
-        let renderer = rend3::Renderer::new(
-            iad,
-            rend3::types::Handedness::Left,
-            Some(window_size.width as f32 / window_size.height as f32),
-        )
-        .unwrap();
-
-        // Create the egui render routine
-        let egui_routine = rend3_egui::EguiRenderRoutine::new(
-            &renderer,
-            preferred_format,
-            rend3::types::SampleCount::One,
-            window_size.width,
-            window_size.height,
-            window.scale_factor() as f32,
-        );
-
-        // Create the egui context
-        let context = egui::Context::default();
-        // context.set_pixels_per_point(window.scale_factor() as f32);
-
-        // Create the winit/egui integration.
-        let mut platform = egui_winit::State::new(window_target);
-        platform.set_pixels_per_point(window.scale_factor() as f32);
-
-        let window_info = WindowInfo {
-            raw_window: window,
-            window_size,
-            surface,
-            preferred_texture_format: preferred_format,
-            egui_routine,
-            egui_context: context,
-            egui_winit_state: platform,
-            rend3_renderer: renderer,
-        };
-
-        let resolution = glam::UVec2::new(
-            window_info.window_size.width,
-            window_info.window_size.height,
-        );
+        let info = WindowInfo::initialize(window_target, window_init_info);
 
         let node_graph_example = NodeGraphExample::default();
 
         Self {
-            id: window_id,
-            info: window_info,
-            resolution,
+            info,
             node_graph_example,
         }
     }
@@ -772,7 +698,7 @@ impl NodeMapWindow {
 
 impl WindowLike for NodeMapWindow {
     fn get_window_id(&self) -> winit::window::WindowId {
-        self.id
+        self.info.window_id
     }
 
     fn handle_input_event(&mut self, _input_state: &InputState, _input_event: input::InputEvent) {}
@@ -793,25 +719,7 @@ impl WindowLike for NodeMapWindow {
     }
 
     fn resize(&mut self, physical_size: winit::dpi::PhysicalSize<u32>) {
-        self.resolution = glam::UVec2::new(physical_size.width, physical_size.height);
-        // Reconfigure the surface for the new size.
-        rend3::configure_surface(
-            &self.info.surface,
-            &self.info.rend3_renderer.device,
-            self.info.preferred_texture_format,
-            glam::UVec2::new(self.resolution.x, self.resolution.y),
-            rend3::types::PresentMode::Fifo,
-        );
-        // Tell the renderer about the new aspect ratio.
-        self.info
-            .rend3_renderer
-            .set_aspect_ratio(self.resolution.x as f32 / self.resolution.y as f32);
-
-        self.info.egui_routine.resize(
-            physical_size.width,
-            physical_size.height,
-            self.info.raw_window.scale_factor() as f32,
-        );
+        self.info.resize_default(physical_size);
     }
 
     fn redraw(&mut self) -> Option<Vec<WindowRedrawCallbackCommand>> {
@@ -913,7 +821,7 @@ impl WindowLike for NodeMapWindow {
         let frame_handle = graph.add_imported_render_target(
             &frame,
             0..1,
-            rend3::graph::ViewportRect::from_size(self.resolution),
+            rend3::graph::ViewportRect::from_size(self.info.resolution),
         );
 
         self.info
