@@ -7,13 +7,33 @@ use libloading;
 
 pub struct RendererPlugin {
     library: Arc<libloading::Library>,
+    thread_handle: Option<JoinHandle<anyhow::Result<()>>>,
+    read_request: Arc<bool>,
+    ready_to_read: Arc<bool>,
+    render_width: u32,
+    render_height: u32,
+    render_rgb_data: Arc<Vec<f32>>,
 }
 
 impl RendererPlugin {
-    pub fn load_plugin(path: &std::ffi::OsStr) -> anyhow::Result<Self> {
+    pub fn load_plugin(
+        path: &std::ffi::OsStr,
+        render_width: u32,
+        render_height: u32,
+    ) -> anyhow::Result<Self> {
         let library = unsafe { Arc::new(libloading::Library::new(path)?) };
 
-        Ok(Self { library })
+        Ok(Self {
+            library,
+            thread_handle: None,
+            ready_to_read: Arc::new(false),
+            read_request: Arc::new(false),
+            render_width,
+            render_height,
+            render_rgb_data: Arc::new(Vec::with_capacity(
+                (3 * render_width * render_height) as usize,
+            )),
+        })
     }
 
     /// Starts an incremental render. This spins up the plugin on another thread and then
@@ -45,21 +65,16 @@ impl RendererPlugin {
     /// ## Returns
     /// - A `JoinHandle` to the spawned thread which called the render routine. The program
     /// can, for example, call `is_finished()` on this to see if the rendering is done.
-    pub fn begin_incremental_render(
-        &self,
-        read_request: &mut Arc<bool>,
-        ready_to_read: &mut Arc<bool>,
-        image_width: u32,
-        image_height: u32,
-        rgb_data: &mut Arc<Vec<f32>>,
-    ) -> JoinHandle<anyhow::Result<()>> {
+    pub fn begin_incremental_render(&mut self) -> JoinHandle<anyhow::Result<()>> {
         // Initial state.
-        *Arc::get_mut(read_request).unwrap() = false;
-        *Arc::get_mut(ready_to_read).unwrap() = false;
+        *Arc::get_mut(&mut self.read_request).unwrap() = false;
+        *Arc::get_mut(&mut self.ready_to_read).unwrap() = false;
 
-        let read_request_threaddata = read_request.clone();
-        let ready_to_read_threaddata = ready_to_read.clone();
-        let rgb_data_threaddata = rgb_data.clone();
+        let read_request_threaddata = self.read_request.clone();
+        let ready_to_read_threaddata = self.ready_to_read.clone();
+        let rgb_data_threaddata = self.render_rgb_data.clone();
+        let image_width = self.render_width;
+        let image_height = self.render_height;
 
         let lib_thread = self.library.clone();
         let join_handle = thread::spawn(move || -> anyhow::Result<()> {

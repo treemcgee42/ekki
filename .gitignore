@@ -1,3 +1,4 @@
 /target
 /external_crates
 Session.vim
+/tests

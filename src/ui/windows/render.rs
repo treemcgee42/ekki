@@ -1,8 +1,14 @@
+use crate::plugins::RendererPlugin;
+
 use super::*;
 
 pub struct RenderWindow {
     info: WindowInfo,
     texture: MyImage,
+    renderer_plugin: Option<RendererPlugin>,
+    render_settings_active: bool,
+    renderer_path: String,
+    should_begin_render: bool,
 }
 
 impl RenderWindow {
@@ -18,7 +24,14 @@ impl RenderWindow {
 
         let texture = MyImage { texture: None };
 
-        Self { info, texture }
+        Self {
+            info,
+            texture,
+            renderer_plugin: None,
+            render_settings_active: false,
+            renderer_path: String::new(),
+            should_begin_render: false,
+        }
     }
 }
 
@@ -43,6 +56,23 @@ impl WindowLike for RenderWindow {
     }
 
     fn redraw(&mut self) -> Option<Vec<WindowRedrawCallbackCommand>> {
+        if self.should_begin_render {
+            self.should_begin_render = false;
+
+            let renderer_plugin =
+                RendererPlugin::load_plugin(std::ffi::OsStr::new(&self.renderer_path), 400, 400);
+            if renderer_plugin.is_err() {
+                log::error!("failed to load renderer plugin");
+            } else {
+                self.renderer_plugin = Some(renderer_plugin.unwrap());
+
+                self.renderer_plugin
+                    .as_mut()
+                    .unwrap()
+                    .begin_incremental_render();
+            }
+        }
+
         // UI
         self.info.egui_context.begin_frame(
             self.info
@@ -51,11 +81,32 @@ impl WindowLike for RenderWindow {
         );
 
         egui::TopBottomPanel::top("my_panel").show(&self.info.egui_context, |ui| {
-            ui.label("Hello World! From `TopBottomPanel`, that must be before `CentralPanel`!");
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| if ui.button("Save as").clicked() {});
+
+                ui.menu_button("Render", |ui| {
+                    if ui.button("Settings").clicked() {
+                        self.render_settings_active = true;
+                    }
+
+                    if ui.button("Render").clicked() {
+                        if self.renderer_plugin.is_none() {
+                            self.should_begin_render = true;
+                        }
+                    }
+                });
+            });
         });
+
         egui::CentralPanel::default().show(&self.info.egui_context, |ui| {
             self.texture.ui(ui);
         });
+
+        draw_render_settings_window(
+            &self.info.egui_context,
+            &mut self.render_settings_active,
+            &mut self.renderer_path,
+        );
 
         let egui::FullOutput {
             shapes,
@@ -108,4 +159,31 @@ impl WindowLike for RenderWindow {
             input::InputEvent::FinishViewportOrbit => {}
         }
     }
+}
+
+fn draw_render_settings_window(
+    ctx: &egui::Context,
+    is_active: &mut bool,
+    renderer_path: &mut String,
+) {
+    egui::Window::new("Render settings")
+        .open(is_active)
+        .resizable(true)
+        .show(ctx, |ui| {
+            egui::Grid::new("render_settings_grid")
+                .num_columns(2)
+                .spacing([40.0, 4.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label("Path");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(renderer_path).hint_text("No path set"));
+                        if ui.button("Open").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                *renderer_path = path.display().to_string();
+                            }
+                        };
+                    });
+                });
+        });
 }
