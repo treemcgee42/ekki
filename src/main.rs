@@ -12,6 +12,7 @@ mod custom_renderer;
 mod grid;
 mod input;
 mod math;
+mod plugins;
 mod scene;
 mod ui;
 
