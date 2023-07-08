@@ -1,3 +1,5 @@
+use crate::scene::SceneData;
+
 use super::*;
 
 pub struct SceneViewer3D {
@@ -6,9 +8,7 @@ pub struct SceneViewer3D {
     pbr_routine: rend3_routine::pbr::PbrRoutine,
     tonemapping_routine: rend3_routine::tonemapping::TonemappingRoutine,
     grid_render_routine: GridRenderRoutine,
-    cam: Camera,
-    _object_handle: rend3::types::ResourceHandle<rend3::types::Object>,
-    _directional_handle: rend3::types::DirectionalLightHandle,
+    scene_data: SceneData,
 }
 
 impl SceneViewer3D {
@@ -54,47 +54,8 @@ impl SceneViewer3D {
 
         info.rend3_renderer.set_camera_data(cam.to_rend3_camera());
 
-        // Create mesh and calculate smooth normals based on vertices
-        let mesh = create_mesh();
-
-        // Add mesh to renderer's world.
-        //
-        // All handles are refcounted, so we only need to hang onto the handle until we
-        // make an object.
-        let mesh_handle = info.rend3_renderer.add_mesh(mesh);
-
-        // Add PBR material with all defaults except a single color.
-        let material = rend3_routine::pbr::PbrMaterial {
-            albedo: rend3_routine::pbr::AlbedoComponent::Value(glam::Vec4::new(0.0, 0.5, 0.5, 1.0)),
-            ..rend3_routine::pbr::PbrMaterial::default()
-        };
-        let material_handle = info.rend3_renderer.add_material(material);
-
-        // Combine the mesh and the material with a location to give an object.
-        let object = rend3::types::Object {
-            mesh_kind: rend3::types::ObjectMeshKind::Static(mesh_handle),
-            material: material_handle,
-            transform: glam::Mat4::IDENTITY,
-        };
-        // Creating an object will hold onto both the mesh and the material
-        // even if they are deleted.
-        //
-        // We need to keep the object handle alive.
-        let _object_handle = info.rend3_renderer.add_object(object);
-
-        // Create a single directional light
-        //
-        // We need to keep the directional light handle alive.
-        let _directional_handle =
-            info.rend3_renderer
-                .add_directional_light(rend3::types::DirectionalLight {
-                    color: glam::Vec3::ONE,
-                    intensity: 10.0,
-                    // Direction will be normalized
-                    direction: glam::Vec3::new(-1.0, -4.0, 2.0),
-                    distance: 400.0,
-                    resolution: 2048,
-                });
+        // Initial scene.
+        let scene_data = SceneData::initialize(info.window_size, &info.rend3_renderer);
 
         Self {
             info,
@@ -102,9 +63,7 @@ impl SceneViewer3D {
             pbr_routine,
             tonemapping_routine,
             grid_render_routine,
-            cam,
-            _object_handle,
-            _directional_handle,
+            scene_data,
         }
     }
 }
@@ -128,11 +87,12 @@ impl WindowLike for SceneViewer3D {
     fn resize(&mut self, physical_size: winit::dpi::PhysicalSize<u32>) {
         self.info.resize_default(physical_size);
 
-        self.cam
+        self.scene_data
+            .camera
             .handle_window_resize(physical_size.width as f32, physical_size.height as f32);
         self.info
             .rend3_renderer
-            .set_camera_data(self.cam.to_rend3_camera());
+            .set_camera_data(self.scene_data.camera.to_rend3_camera());
     }
 
     fn redraw(&mut self) -> Option<Vec<WindowRedrawCallbackCommand>> {
@@ -219,22 +179,22 @@ impl WindowLike for SceneViewer3D {
     fn handle_input_event(&mut self, input_state: &InputState, input_event: input::InputEvent) {
         match input_event {
             input::InputEvent::DoViewportOrbit => {
-                self.cam.turntable_rotate(
+                self.scene_data.camera.turntable_rotate(
                     &input_state.mouse.curr_cursor_pos
                         - input_state.mouse.cursor_pos_on_pressed.as_ref().unwrap(),
                     self.info.window_size.into(),
                 );
                 self.info
                     .rend3_renderer
-                    .set_camera_data(self.cam.to_rend3_camera());
+                    .set_camera_data(self.scene_data.camera.to_rend3_camera());
                 log::trace!("(event) do viewport orbit");
             }
 
             input::InputEvent::FinishViewportOrbit => {
-                self.cam.solidify_view_info();
+                self.scene_data.camera.solidify_view_info();
                 self.info
                     .rend3_renderer
-                    .set_camera_data(self.cam.to_rend3_camera());
+                    .set_camera_data(self.scene_data.camera.to_rend3_camera());
                 log::trace!("(event) finish viewport orbit");
             }
         }

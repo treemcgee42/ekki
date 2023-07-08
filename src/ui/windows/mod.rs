@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use crate::{
     camera::Camera,
-    create_mesh,
     grid::GridRenderRoutine,
     input::{self, InputState},
     ui, MyImage, WindowCloseCallbackCommand, WindowRedrawCallbackCommand,
