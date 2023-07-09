@@ -30,10 +30,44 @@ impl RendererPlugin {
             read_request: Arc::new(false),
             render_width,
             render_height,
-            render_rgb_data: Arc::new(Vec::with_capacity(
-                (3 * render_width * render_height) as usize,
-            )),
+            render_rgb_data: Arc::new(vec![1.; (3 * render_width * render_height) as usize]),
         })
+    }
+
+    pub fn join_thread(&mut self) {
+        let handle = std::mem::replace(&mut self.thread_handle, None);
+        let _ = handle.unwrap().join();
+    }
+
+    pub fn render_is_finished(&self) -> bool {
+        if let Some(handle) = &self.thread_handle {
+            return handle.is_finished();
+        }
+
+        false
+    }
+
+    pub fn request_read(&mut self) {
+        let read_request = Arc::as_ptr(&self.read_request).cast_mut();
+        unsafe {
+            *read_request = true;
+        }
+    }
+
+    pub fn poll_read_request(&mut self) -> bool {
+        if *self.ready_to_read {
+            let read_request = Arc::as_ptr(&self.read_request).cast_mut();
+            let ready_to_read = Arc::as_ptr(&self.ready_to_read).cast_mut();
+
+            unsafe {
+                *read_request = false;
+                *ready_to_read = false;
+            }
+
+            return true;
+        }
+
+        false
     }
 
     /// Starts an incremental render. This spins up the plugin on another thread and then
@@ -65,11 +99,7 @@ impl RendererPlugin {
     /// ## Returns
     /// - A `JoinHandle` to the spawned thread which called the render routine. The program
     /// can, for example, call `is_finished()` on this to see if the rendering is done.
-    pub fn begin_incremental_render(&mut self) -> JoinHandle<anyhow::Result<()>> {
-        // Initial state.
-        *Arc::get_mut(&mut self.read_request).unwrap() = false;
-        *Arc::get_mut(&mut self.ready_to_read).unwrap() = false;
-
+    pub fn begin_incremental_render(&mut self) {
         let read_request_threaddata = self.read_request.clone();
         let ready_to_read_threaddata = self.ready_to_read.clone();
         let rgb_data_threaddata = self.render_rgb_data.clone();
@@ -77,7 +107,7 @@ impl RendererPlugin {
         let image_height = self.render_height;
 
         let lib_thread = self.library.clone();
-        let join_handle = thread::spawn(move || -> anyhow::Result<()> {
+        self.thread_handle = Some(thread::spawn(move || -> anyhow::Result<()> {
             unsafe {
                 let read_request_param = Arc::as_ptr(&read_request_threaddata).cast_mut();
                 let ready_to_read_param = Arc::as_ptr(&ready_to_read_threaddata).cast_mut();
@@ -96,9 +126,34 @@ impl RendererPlugin {
             }
 
             Ok(())
-        });
+        }));
+    }
 
-        join_handle
+    pub fn convert_rgb_data_to_egui_image(&self) -> egui::ColorImage {
+        let mut colors = vec![
+            egui::Color32::from_rgb(255, 255, 255);
+            (self.render_width * self.render_height) as usize
+        ];
+
+        for x in 0..self.render_width {
+            for y in 0..self.render_height {
+                let start_idx = (3 * x + 3 * y * self.render_width) as usize;
+
+                let color = egui::Color32::from_rgb(
+                    (self.render_rgb_data.get(start_idx).unwrap() * 255.999) as u8,
+                    (self.render_rgb_data.get(start_idx + 1).unwrap() * 255.999) as u8,
+                    (self.render_rgb_data.get(start_idx + 2).unwrap() * 255.999) as u8,
+                );
+
+                let idx = (x + y * self.render_width) as usize;
+                colors[idx] = color;
+            }
+        }
+
+        egui::ColorImage {
+            size: [self.render_width as usize, self.render_height as usize],
+            pixels: colors,
+        }
     }
 }
 

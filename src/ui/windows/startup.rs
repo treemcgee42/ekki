@@ -56,7 +56,7 @@ impl StartupWindow {
         };
         let window_info = WindowInfo::initialize(window_target, window_init_info);
 
-        let texture = MyImage { texture: None };
+        let texture = MyImage::default();
 
         Self {
             info: window_info,
@@ -142,6 +142,17 @@ impl WindowLike for StartupWindow {
                             callbacks
                                 .push(WindowRedrawCallbackCommand::CreateNodeMapWindowAndClose);
                         }
+
+                        if columns[0]
+                            .add(
+                                egui::Label::new(egui::RichText::new("👾 Render").size(18.))
+                                    .sense(egui::Sense::click()),
+                            )
+                            .clicked()
+                        {
+                            callbacks.push(WindowRedrawCallbackCommand::CreateRenderWindowAndClose);
+                        }
+
                         columns[0].label(egui::RichText::new("👾 2D scene").size(18.));
                         columns[0].label(egui::RichText::new("🎩 Plugin editor").size(18.));
                         columns[0].label(egui::RichText::new("🌺 Hibiscus").size(18.));

@@ -18,11 +18,26 @@ mod ui;
 
 struct MyImage {
     texture: Option<egui::TextureHandle>,
+    temp_texture: Option<egui::TextureHandle>,
+}
+
+impl Default for MyImage {
+    fn default() -> Self {
+        Self {
+            texture: None,
+            temp_texture: None,
+        }
+    }
 }
 
 impl MyImage {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        let texture: &egui::TextureHandle = self.texture.get_or_insert_with(|| {
+        if let Some(texture) = &self.texture {
+            ui.image(texture, ui.available_size());
+            return;
+        }
+
+        let texture: &egui::TextureHandle = self.temp_texture.get_or_insert_with(|| {
             // Load the texture only once.
             ui.ctx()
                 .load_texture("my-image", egui::ColorImage::example(), Default::default())
@@ -38,6 +53,7 @@ pub enum WindowRedrawCallbackCommand {
     Create3DWindow,
     Create3DWindowAndClose,
     CreateNodeMapWindowAndClose,
+    CreateRenderWindowAndClose,
 }
 
 pub enum WindowCloseCallbackCommand {
@@ -201,6 +217,13 @@ fn main() {
                                 windows.remove(&id);
                                 recently_closed_windows.push(id);
                                 let new_window = NodeMapWindow::create(window_target);
+                                windows.insert(new_window.get_window_id(), Box::new(new_window));
+                            }
+
+                            WindowRedrawCallbackCommand::CreateRenderWindowAndClose => {
+                                windows.remove(&id);
+                                recently_closed_windows.push(id);
+                                let new_window = RenderWindow::create(window_target);
                                 windows.insert(new_window.get_window_id(), Box::new(new_window));
                             }
                         }

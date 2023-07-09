@@ -4,11 +4,16 @@ use super::*;
 
 pub struct RenderWindow {
     info: WindowInfo,
-    texture: MyImage,
+    texture: RenderImage,
     renderer_plugin: Option<RendererPlugin>,
     render_settings_active: bool,
     renderer_path: String,
+    render_in_progress: bool,
     should_begin_render: bool,
+    should_transfer_render_data: bool,
+    render_preview_update_requested: bool,
+    time_of_last_render_preview_update: f64,
+    preview_update_frequency: u32,
 }
 
 impl RenderWindow {
@@ -22,16 +27,70 @@ impl RenderWindow {
         };
         let info = WindowInfo::initialize(window_target, init_info);
 
-        let texture = MyImage { texture: None };
-
         Self {
             info,
-            texture,
+            texture: RenderImage::default(),
             renderer_plugin: None,
             render_settings_active: false,
             renderer_path: String::new(),
+            render_in_progress: false,
             should_begin_render: false,
+            should_transfer_render_data: true,
+            render_preview_update_requested: false,
+            time_of_last_render_preview_update: f64::NEG_INFINITY,
+            preview_update_frequency: 2,
         }
+    }
+}
+
+struct RenderImage {
+    texture: Option<egui::TextureHandle>,
+    temp_texture: Option<egui::TextureHandle>,
+}
+
+impl Default for RenderImage {
+    fn default() -> Self {
+        Self {
+            texture: None,
+            temp_texture: None,
+        }
+    }
+}
+
+impl RenderImage {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        if let Some(texture) = &self.texture {
+            let width: f32;
+            let height: f32;
+
+            let texture_width = texture.size()[0] as f32;
+            let texture_height = texture.size()[1] as f32;
+            let texture_aspect_ratio = texture_width / texture_height;
+
+            // Determine a size to display that won't distort the image.
+            // TODO: handle edge cases.
+            if texture_width < ui.available_width() && texture_height < ui.available_height() {
+                width = texture_width;
+                height = texture_height;
+            } else if texture_width >= ui.available_width() {
+                width = ui.available_width();
+                height = width / texture_aspect_ratio;
+            } else {
+                height = ui.available_height();
+                width = height * texture_aspect_ratio;
+            }
+
+            ui.image(texture, egui::Vec2::new(width, height));
+            return;
+        }
+
+        let texture: &egui::TextureHandle = self.temp_texture.get_or_insert_with(|| {
+            // Load the texture only once.
+            ui.ctx()
+                .load_texture("my-image", egui::ColorImage::example(), Default::default())
+        });
+
+        ui.image(texture, ui.available_size());
     }
 }
 
@@ -60,16 +119,60 @@ impl WindowLike for RenderWindow {
             self.should_begin_render = false;
 
             let renderer_plugin =
-                RendererPlugin::load_plugin(std::ffi::OsStr::new(&self.renderer_path), 400, 400);
+                RendererPlugin::load_plugin(std::ffi::OsStr::new(&self.renderer_path), 512, 512);
             if renderer_plugin.is_err() {
                 log::error!("failed to load renderer plugin");
             } else {
                 self.renderer_plugin = Some(renderer_plugin.unwrap());
-
                 self.renderer_plugin
                     .as_mut()
                     .unwrap()
                     .begin_incremental_render();
+
+                self.render_in_progress = true;
+            }
+        }
+
+        if let Some(plug) = &mut self.renderer_plugin {
+            if self.render_in_progress {
+                if self.info.egui_context.input(|i| i.time)
+                    - self.time_of_last_render_preview_update
+                    > (self.preview_update_frequency as f64)
+                    && !self.render_preview_update_requested
+                {
+                    plug.request_read();
+                    self.render_preview_update_requested = true;
+                }
+
+                if self.render_preview_update_requested {
+                    if plug.poll_read_request() {
+                        self.should_transfer_render_data = true;
+                    }
+                }
+
+                if self.should_transfer_render_data || plug.render_is_finished() {
+                    let egui_color_image = plug.convert_rgb_data_to_egui_image();
+                    self.texture.texture = Some(self.info.egui_context.load_texture(
+                        "render",
+                        egui_color_image,
+                        Default::default(),
+                    ));
+
+                    // Reset flags.
+                    self.should_transfer_render_data = false;
+
+                    if self.render_preview_update_requested {
+                        self.time_of_last_render_preview_update =
+                            self.info.egui_context.input(|i| i.time);
+                        self.render_preview_update_requested = false;
+                    }
+
+                    if plug.render_is_finished() {
+                        plug.join_thread();
+                        self.render_preview_update_requested = false;
+                        self.render_in_progress = false;
+                    }
+                }
             }
         }
 
@@ -99,13 +202,16 @@ impl WindowLike for RenderWindow {
         });
 
         egui::CentralPanel::default().show(&self.info.egui_context, |ui| {
-            self.texture.ui(ui);
+            ui.centered_and_justified(|ui| {
+                self.texture.ui(ui);
+            })
         });
 
         draw_render_settings_window(
             &self.info.egui_context,
             &mut self.render_settings_active,
             &mut self.renderer_path,
+            &mut self.preview_update_frequency,
         );
 
         let egui::FullOutput {
@@ -165,6 +271,7 @@ fn draw_render_settings_window(
     ctx: &egui::Context,
     is_active: &mut bool,
     renderer_path: &mut String,
+    preview_update_frequency: &mut u32,
 ) {
     egui::Window::new("Render settings")
         .open(is_active)
@@ -184,6 +291,10 @@ fn draw_render_settings_window(
                             }
                         };
                     });
+                    ui.end_row();
+
+                    ui.label("Preview frequency");
+                    ui.add(egui::Slider::new(preview_update_frequency, 1..=10));
                 });
         });
 }
