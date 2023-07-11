@@ -176,6 +176,13 @@ impl WindowLike for RenderWindow {
             }
         }
 
+        let render_progress = self
+            .renderer_plugin
+            .as_ref()
+            .map(|plug| plug.get_render_progress())
+            .unwrap_or(0.)
+            .clamp(0., 1.);
+
         // UI
         self.info.egui_context.begin_frame(
             self.info
@@ -199,6 +206,10 @@ impl WindowLike for RenderWindow {
                     }
                 });
             });
+        });
+
+        egui::TopBottomPanel::bottom("render_info").show(&self.info.egui_context, |ui| {
+            ui.add(egui::ProgressBar::new(render_progress).show_percentage());
         });
 
         egui::CentralPanel::default().show(&self.info.egui_context, |ui| {

@@ -13,6 +13,7 @@ pub struct RendererPlugin {
     render_width: u32,
     render_height: u32,
     render_rgb_data: Arc<Vec<f32>>,
+    render_progress: Arc<f32>,
 }
 
 impl RendererPlugin {
@@ -31,6 +32,7 @@ impl RendererPlugin {
             render_width,
             render_height,
             render_rgb_data: Arc::new(vec![1.; (3 * render_width * render_height) as usize]),
+            render_progress: Arc::new(0.),
         })
     }
 
@@ -70,6 +72,10 @@ impl RendererPlugin {
         false
     }
 
+    pub fn get_render_progress(&self) -> f32 {
+        *self.render_progress
+    }
+
     /// Starts an incremental render. This spins up the plugin on another thread and then
     /// returns (without waiting for the plugin to finish rendering).
     ///
@@ -105,12 +111,14 @@ impl RendererPlugin {
         let rgb_data_threaddata = self.render_rgb_data.clone();
         let image_width = self.render_width;
         let image_height = self.render_height;
+        let progress = self.render_progress.clone();
 
         let lib_thread = self.library.clone();
         self.thread_handle = Some(thread::spawn(move || -> anyhow::Result<()> {
             unsafe {
                 let read_request_param = Arc::as_ptr(&read_request_threaddata).cast_mut();
                 let ready_to_read_param = Arc::as_ptr(&ready_to_read_threaddata).cast_mut();
+                let progress_param = Arc::as_ptr(&progress).cast_mut();
 
                 let rgb_data_param = (*Arc::as_ptr(&rgb_data_threaddata).cast_mut()).as_mut_ptr();
 
@@ -122,6 +130,7 @@ impl RendererPlugin {
                     image_width,
                     image_height,
                     rgb_data_param,
+                    progress_param,
                 );
             }
 
@@ -163,4 +172,5 @@ type FnBeginIncrementalRender = extern "C" fn(
     std::ffi::c_uint,       // image_width
     std::ffi::c_uint,       // image_height
     *mut std::ffi::c_float, // rgb_data
+    *mut std::ffi::c_float, // progress
 );

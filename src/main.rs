@@ -8,7 +8,6 @@ use ui::windows::{
 
 mod base;
 mod camera;
-mod custom_renderer;
 mod grid;
 mod input;
 mod math;
