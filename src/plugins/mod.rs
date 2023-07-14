@@ -1,11 +1,12 @@
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex, RwLock},
     thread::{self, JoinHandle},
 };
 
 use libloading;
 
 pub struct RendererPlugin {
+    path: std::ffi::OsString,
     library: Arc<libloading::Library>,
     thread_handle: Option<JoinHandle<anyhow::Result<()>>>,
     read_request: Arc<bool>,
@@ -22,10 +23,11 @@ impl RendererPlugin {
         render_width: u32,
         render_height: u32,
     ) -> anyhow::Result<Self> {
-        let library = unsafe { Arc::new(libloading::Library::new(path)?) };
+        let library = unsafe { libloading::Library::new(path)? };
 
         Ok(Self {
-            library,
+            path: path.to_os_string(),
+            library: Arc::new(library),
             thread_handle: None,
             ready_to_read: Arc::new(false),
             read_request: Arc::new(false),
@@ -34,6 +36,13 @@ impl RendererPlugin {
             render_rgb_data: Arc::new(vec![1.; (3 * render_width * render_height) as usize]),
             render_progress: Arc::new(0.),
         })
+    }
+
+    pub fn reload(&mut self) -> anyhow::Result<()> {
+        let mut new_lib = unsafe { Arc::new(libloading::Library::new(&self.path)?) };
+
+        std::mem::swap(&mut self.library, &mut new_lib);
+        Ok(())
     }
 
     pub fn join_thread(&mut self) {
@@ -114,8 +123,8 @@ impl RendererPlugin {
         let progress = self.render_progress.clone();
 
         let lib_thread = self.library.clone();
-        self.thread_handle = Some(thread::spawn(move || -> anyhow::Result<()> {
-            unsafe {
+        unsafe {
+            self.thread_handle = Some(thread::spawn(move || -> anyhow::Result<()> {
                 let read_request_param = Arc::as_ptr(&read_request_threaddata).cast_mut();
                 let ready_to_read_param = Arc::as_ptr(&ready_to_read_threaddata).cast_mut();
                 let progress_param = Arc::as_ptr(&progress).cast_mut();
@@ -132,10 +141,10 @@ impl RendererPlugin {
                     rgb_data_param,
                     progress_param,
                 );
-            }
 
-            Ok(())
-        }));
+                Ok(())
+            }));
+        }
     }
 
     pub fn convert_rgb_data_to_egui_image(&self) -> egui::ColorImage {

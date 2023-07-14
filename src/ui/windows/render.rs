@@ -14,6 +14,7 @@ pub struct RenderWindow {
     render_preview_update_requested: bool,
     time_of_last_render_preview_update: f64,
     preview_update_frequency: u32,
+    reload_renderer: bool,
 }
 
 impl RenderWindow {
@@ -39,6 +40,7 @@ impl RenderWindow {
             render_preview_update_requested: false,
             time_of_last_render_preview_update: f64::NEG_INFINITY,
             preview_update_frequency: 2,
+            reload_renderer: false,
         }
     }
 }
@@ -115,6 +117,14 @@ impl WindowLike for RenderWindow {
     }
 
     fn redraw(&mut self) -> Option<Vec<WindowRedrawCallbackCommand>> {
+        if self.reload_renderer && self.renderer_plugin.is_some() {
+            if let Some(plug) = &mut self.renderer_plugin {
+                plug.reload().unwrap();
+                self.reload_renderer = false;
+                self.should_begin_render = true;
+            }
+        }
+
         if self.should_begin_render {
             self.should_begin_render = false;
 
@@ -203,6 +213,10 @@ impl WindowLike for RenderWindow {
                         if self.renderer_plugin.is_none() {
                             self.should_begin_render = true;
                         }
+                    }
+
+                    if ui.button("Reload").clicked() {
+                        self.reload_renderer = true;
                     }
                 });
             });
