@@ -1,4 +1,4 @@
-use crate::plugins::RendererPlugin;
+use crate::{config::RenderUserConfig, plugins::RendererPlugin};
 
 use super::*;
 
@@ -18,7 +18,10 @@ pub struct RenderWindow {
 }
 
 impl RenderWindow {
-    pub fn create<T>(window_target: &winit::event_loop::EventLoopWindowTarget<T>) -> Self
+    pub fn create<T>(
+        window_target: &winit::event_loop::EventLoopWindowTarget<T>,
+        user_config: &Option<RenderUserConfig>,
+    ) -> Self
     where
         T: 'static,
     {
@@ -28,18 +31,27 @@ impl RenderWindow {
         };
         let info = WindowInfo::initialize(window_target, init_info);
 
+        let renderer_path = user_config
+            .as_ref()
+            .and_then(|conf| conf.renderer_path.clone())
+            .unwrap_or(String::new());
+        let preview_update_frequency = user_config
+            .as_ref()
+            .and_then(|conf| conf.update_frequency)
+            .unwrap_or(2);
+
         Self {
             info,
             texture: RenderImage::default(),
             renderer_plugin: None,
             render_settings_active: false,
-            renderer_path: String::new(),
+            renderer_path,
             render_in_progress: false,
             should_begin_render: false,
             should_transfer_render_data: true,
             render_preview_update_requested: false,
             time_of_last_render_preview_update: f64::NEG_INFINITY,
-            preview_update_frequency: 2,
+            preview_update_frequency,
             reload_renderer: false,
         }
     }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use config::UserConfig;
 use math::vector::Vector2;
 use ui::windows::{
     node_map::NodeMapWindow, render::RenderWindow, scene_viewer_3d::SceneViewer3D,
@@ -8,6 +9,7 @@ use ui::windows::{
 
 mod base;
 mod camera;
+mod config;
 mod grid;
 mod input;
 mod math;
@@ -60,12 +62,29 @@ pub enum WindowCloseCallbackCommand {
     QuitProgram,
 }
 
+fn parse_user_config() -> UserConfig {
+    let config_file = std::fs::read_to_string("ekki_config.toml");
+    if config_file.is_err() {
+        return UserConfig::default();
+    }
+    let config_file = config_file.unwrap();
+
+    let parsed_config: Result<UserConfig, _> = toml::from_str(config_file.as_str());
+    if let Err(e) = &parsed_config {
+        log::warn!("Error in parsing user config file: {}", e);
+        return UserConfig::default();
+    }
+
+    parsed_config.unwrap()
+}
+
 fn main() {
     // State
     let mut render_window_active = false;
+    let user_config = parse_user_config();
 
     // Setup logging
-    ui::console::init(log::LevelFilter::Warn).unwrap();
+    ui::console::init(user_config.get_log_level()).unwrap();
 
     // Create event loop and window
     let event_loop = winit::event_loop::EventLoop::new();
@@ -73,8 +92,20 @@ fn main() {
 
     let mut windows: HashMap<winit::window::WindowId, Box<dyn WindowLike>> = HashMap::new();
     {
-        let startup_window = StartupWindow::create(&event_loop);
-        windows.insert(startup_window.get_window_id(), Box::new(startup_window));
+        let startup_window_kind = user_config
+            .startup
+            .and_then(|conf| Some(conf.get_startup_window_option()))
+            .unwrap_or(config::StartupWindowOption::Startup);
+        match startup_window_kind {
+            config::StartupWindowOption::Startup => {
+                let startup_window = StartupWindow::create(&event_loop);
+                windows.insert(startup_window.get_window_id(), Box::new(startup_window));
+            }
+            config::StartupWindowOption::Render => {
+                let startup_window = RenderWindow::create(&event_loop, &user_config.render);
+                windows.insert(startup_window.get_window_id(), Box::new(startup_window));
+            }
+        }
     }
 
     // TODO: never cleared
@@ -138,7 +169,8 @@ fn main() {
 
                         if keycode == Some(winit::event::VirtualKeyCode::R) && !render_window_active
                         {
-                            let new_window = RenderWindow::create(window_target);
+                            let new_window =
+                                RenderWindow::create(window_target, &user_config.render);
                             windows.insert(new_window.get_window_id(), Box::new(new_window));
                             render_window_active = true;
                         }
@@ -222,7 +254,8 @@ fn main() {
                             WindowRedrawCallbackCommand::CreateRenderWindowAndClose => {
                                 windows.remove(&id);
                                 recently_closed_windows.push(id);
-                                let new_window = RenderWindow::create(window_target);
+                                let new_window =
+                                    RenderWindow::create(window_target, &user_config.render);
                                 windows.insert(new_window.get_window_id(), Box::new(new_window));
                             }
                         }

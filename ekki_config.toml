@@ -1,0 +1,10 @@
+
+log_level = "warn"
+
+[startup]
+startup_window = "render"
+
+[render]
+renderer_path = '/Users/ogmalladii/dev/cpp/mirth/cmake-build-release/libmirth_ekki.dylib'
+update_frequency = 2
+
